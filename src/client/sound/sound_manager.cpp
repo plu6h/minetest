@@ -1,33 +1,20 @@
-/*
-Minetest
-Copyright (C) 2022 DS
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-OpenAL support based on work by:
-Copyright (C) 2011 Sebastian 'Bahamada' Rühl
-Copyright (C) 2011 Cyriaque 'Cisoun' Skrapits <cysoun@gmail.com>
-Copyright (C) 2011 Giuseppe Bilotta <giuseppe.bilotta@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; ifnot, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2022 DS
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
+// Copyright (C) 2011 Sebastian 'Bahamada' Rühl
+// Copyright (C) 2011 Cyriaque 'Cisoun' Skrapits <cysoun@gmail.com>
+// Copyright (C) 2011 Giuseppe Bilotta <giuseppe.bilotta@gmail.com>
 
 #include "sound_manager.h"
 
 #include "sound_singleton.h"
 #include "util/numeric.h" // myrand()
+#include "util/tracy_wrapper.h"
 #include "filesys.h"
 #include "porting.h"
+
+#include <limits>
 
 namespace sound {
 
@@ -164,10 +151,13 @@ std::shared_ptr<PlayingSound> OpenALSoundManager::createPlayingSound(
 		return nullptr;
 	}
 
-	if (lsnd->m_decode_info.is_stereo && pos_vel_opt.has_value()) {
+	if (lsnd->m_decode_info.is_stereo && pos_vel_opt.has_value()
+			&& m_warned_positional_stereo_sounds.find(sound_name)
+					== m_warned_positional_stereo_sounds.end()) {
 		warningstream << "OpenALSoundManager::createPlayingSound: "
 				<< "Creating positional stereo sound \"" << sound_name << "\"."
 				<< std::endl;
+		m_warned_positional_stereo_sounds.insert(sound_name);
 	}
 
 	ALuint source_id;
@@ -178,11 +168,10 @@ std::shared_ptr<PlayingSound> OpenALSoundManager::createPlayingSound(
 	}
 
 	auto sound = std::make_shared<PlayingSound>(source_id, std::move(lsnd), loop,
-			volume, pitch, start_time, pos_vel_opt);
+			volume, pitch, start_time, pos_vel_opt, m_exts);
 
 	sound->play();
-	if (m_is_paused)
-		sound->pause();
+
 	warn_if_al_error("createPlayingSound");
 	return sound;
 }
@@ -269,7 +258,8 @@ OpenALSoundManager::OpenALSoundManager(SoundManagerSingleton *smg,
 	Thread("OpenALSoundManager"),
 	m_fallback_path_provider(std::move(fallback_path_provider)),
 	m_device(smg->m_device.get()),
-	m_context(smg->m_context.get())
+	m_context(smg->m_context.get()),
+	m_exts(m_device)
 {
 	SANITY_CHECK(!!m_fallback_path_provider);
 
@@ -344,6 +334,13 @@ void OpenALSoundManager::updateListener(const v3f &pos_, const v3f &vel_,
 
 void OpenALSoundManager::setListenerGain(f32 gain)
 {
+#if defined(__APPLE__)
+	/* macOS OpenAL implementation ignore setting AL_GAIN to zero
+	 * so we use smallest possible value
+	 */
+	if (gain == 0.0f)
+		gain = std::numeric_limits<f32>::min();
+#endif
 	alListenerf(AL_GAIN, gain);
 }
 
@@ -489,6 +486,8 @@ void *OpenALSoundManager::run()
 
 	u64 t_step_start = porting::getTimeMs();
 	while (true) {
+		auto framemarker = FrameMarker("OpenALSoundManager::run()-frame").started();
+
 		auto get_time_since_last_step = [&] {
 			return (f32)(porting::getTimeMs() - t_step_start);
 		};
@@ -514,7 +513,7 @@ void *OpenALSoundManager::run()
 		if (stop_requested)
 			break;
 
-		f32 dtime = get_time_since_last_step();
+		f32 dtime = get_time_since_last_step() * 1.0e-3f;
 		t_step_start = porting::getTimeMs();
 		step(dtime);
 	}

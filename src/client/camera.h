@@ -1,27 +1,12 @@
-/*
-Minetest
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #pragma once
 
-#include "irrlichttypes_extrabloated.h"
+#include "irrlichttypes.h"
 #include "inventory.h"
-#include "client/tile.h"
+#include "util/numeric.h"
 #include "client/localplayer.h"
 #include <ICameraSceneNode.h>
 #include <ISceneNode.h>
@@ -63,7 +48,7 @@ struct Nametag
 			return bgcolor.value();
 		else if (!use_fallback)
 			return video::SColor(0, 0, 0, 0);
-		else if (textcolor.getLuminance() > 186)
+		else if (textcolor.getBrightness() > 186)
 			// Dark background for light text
 			return video::SColor(50, 50, 50, 50);
 		else
@@ -162,6 +147,9 @@ public:
 	// Update the camera from the local player's position.
 	void update(LocalPlayer* player, f32 frametime, f32 tool_reload_ratio);
 
+	// Adjust the camera offset when needed
+	void updateOffset();
+
 	// Update render distance
 	void updateViewingRange();
 
@@ -241,7 +229,7 @@ private:
 
 	// Server-sent FOV variables
 	bool m_server_sent_fov = false;
-	f32 m_curr_fov_degrees, m_old_fov_degrees, m_target_fov_degrees;
+	f32 m_curr_fov_degrees, m_target_fov_degrees;
 
 	// FOV transition variables
 	bool m_fov_transition_active = false;

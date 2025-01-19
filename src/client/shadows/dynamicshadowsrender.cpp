@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2021 Liso <anlismon@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2021 Liso <anlismon@gmail.com>
 
 #include <cstring>
 #include <cmath>
@@ -29,14 +14,15 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "client/client.h"
 #include "client/clientmap.h"
 #include "profiler.h"
-#include "EShaderTypes.h"
 #include "IGPUProgrammingServices.h"
 #include "IMaterialRenderer.h"
+#include "IVideoDriver.h"
 
 ShadowRenderer::ShadowRenderer(IrrlichtDevice *device, Client *client) :
 		m_smgr(device->getSceneManager()), m_driver(device->getVideoDriver()),
-		m_client(client), m_current_frame(0),
-		m_perspective_bias_xy(0.8), m_perspective_bias_z(0.5)
+		m_client(client), m_shadow_strength(0.0f), m_shadow_tint(255, 0, 0, 0),
+		m_time_day(0.0f), m_force_update_shadow_map(false), m_current_frame(0),
+		m_perspective_bias_xy(0.8f), m_perspective_bias_z(0.5f)
 {
 	(void) m_client;
 
@@ -118,20 +104,17 @@ void ShadowRenderer::disable()
 		});
 }
 
+void ShadowRenderer::preInit(IWritableShaderSource *shsrc)
+{
+	if (g_settings->getBool("enable_dynamic_shadows")) {
+		shsrc->addShaderConstantSetterFactory(new ShadowConstantSetterFactory());
+	}
+}
+
 void ShadowRenderer::initialize()
 {
-	auto *gpu = m_driver->getGPUProgrammingServices();
+	createShaders();
 
-	// we need glsl
-	if (m_shadows_supported && gpu && m_driver->queryFeature(video::EVDF_ARB_GLSL)) {
-		createShaders();
-	} else {
-		m_shadows_supported = false;
-
-		warningstream << "Shadows: GLSL Shader not supported on this system."
-			<< std::endl;
-		return;
-	}
 
 	m_texture_format = m_shadow_map_texture_32bit
 					   ? video::ECOLOR_FORMAT::ECF_R32F
@@ -171,8 +154,8 @@ f32 ShadowRenderer::getMaxShadowFar() const
 
 void ShadowRenderer::setShadowIntensity(float shadow_intensity)
 {
-	m_shadow_strength = pow(shadow_intensity, 1.0f / m_shadow_strength_gamma);
-	if (m_shadow_strength > 1E-2)
+	m_shadow_strength = std::pow(shadow_intensity, 1.0f / m_shadow_strength_gamma);
+	if (m_shadow_strength > 1e-2f)
 		enable();
 	else
 		disable();
@@ -183,8 +166,7 @@ void ShadowRenderer::addNodeToShadowList(
 {
 	m_shadow_node_array.emplace_back(node, shadowMode);
 	// node should never be ClientMap
-	assert(strcmp(node->getName(), "ClientMap") != 0);
-
+	assert(!node->getName().has_value() || *node->getName() != "ClientMap");
 	node->forEachMaterial([this] (auto &mat) {
 		mat.setTexture(TEXTURE_LAYER_SHADOW, shadowMapTextureFinal);
 	});
@@ -538,7 +520,7 @@ void ShadowRenderer::mixShadowsQuad()
 
 void ShadowRenderer::createShaders()
 {
-	video::IGPUProgrammingServices *gpu = m_driver->getGPUProgrammingServices();
+	auto *gpu = m_driver->getGPUProgrammingServices();
 
 	if (depth_shader == -1) {
 		std::string depth_shader_vs = getShaderPath("shadow_shaders", "pass1_vertex.glsl");
@@ -556,10 +538,9 @@ void ShadowRenderer::createShaders()
 		m_shadow_depth_cb = new ShadowDepthShaderCB();
 
 		depth_shader = gpu->addHighLevelShaderMaterial(
-				readShaderFile(depth_shader_vs).c_str(), "vertexMain",
-				video::EVST_VS_1_1,
-				readShaderFile(depth_shader_fs).c_str(), "pixelMain",
-				video::EPST_PS_1_2, m_shadow_depth_cb, video::EMT_ONETEXTURE_BLEND);
+				readShaderFile(depth_shader_vs).c_str(),
+				readShaderFile(depth_shader_fs).c_str(), nullptr,
+				m_shadow_depth_cb, video::EMT_ONETEXTURE_BLEND);
 
 		if (depth_shader == -1) {
 			// upsi, something went wrong loading shader.
@@ -595,10 +576,9 @@ void ShadowRenderer::createShaders()
 		m_shadow_depth_entity_cb = new ShadowDepthShaderCB();
 
 		depth_shader_entities = gpu->addHighLevelShaderMaterial(
-				readShaderFile(depth_shader_vs).c_str(), "vertexMain",
-				video::EVST_VS_1_1,
-				readShaderFile(depth_shader_fs).c_str(), "pixelMain",
-				video::EPST_PS_1_2, m_shadow_depth_entity_cb);
+				readShaderFile(depth_shader_vs).c_str(),
+				readShaderFile(depth_shader_fs).c_str(), nullptr,
+				m_shadow_depth_entity_cb);
 
 		if (depth_shader_entities == -1) {
 			// upsi, something went wrong loading shader.
@@ -633,10 +613,9 @@ void ShadowRenderer::createShaders()
 		m_shadow_mix_cb = new shadowScreenQuadCB();
 		m_screen_quad = new shadowScreenQuad();
 		mixcsm_shader = gpu->addHighLevelShaderMaterial(
-				readShaderFile(depth_shader_vs).c_str(), "vertexMain",
-				video::EVST_VS_1_1,
-				readShaderFile(depth_shader_fs).c_str(), "pixelMain",
-				video::EPST_PS_1_2, m_shadow_mix_cb);
+				readShaderFile(depth_shader_vs).c_str(),
+				readShaderFile(depth_shader_fs).c_str(), nullptr,
+				m_shadow_mix_cb);
 
 		m_screen_quad->getMaterial().MaterialType =
 				(video::E_MATERIAL_TYPE)mixcsm_shader;
@@ -672,10 +651,9 @@ void ShadowRenderer::createShaders()
 		m_shadow_depth_trans_cb = new ShadowDepthShaderCB();
 
 		depth_shader_trans = gpu->addHighLevelShaderMaterial(
-				readShaderFile(depth_shader_vs).c_str(), "vertexMain",
-				video::EVST_VS_1_1,
-				readShaderFile(depth_shader_fs).c_str(), "pixelMain",
-				video::EPST_PS_1_2, m_shadow_depth_trans_cb);
+				readShaderFile(depth_shader_vs).c_str(),
+				readShaderFile(depth_shader_fs).c_str(), nullptr,
+				m_shadow_depth_trans_cb);
 
 		if (depth_shader_trans == -1) {
 			// upsi, something went wrong loading shader.
@@ -702,7 +680,8 @@ std::string ShadowRenderer::readShaderFile(const std::string &path)
 	prefix.append("#line 0\n");
 
 	std::string content;
-	fs::ReadFile(path, content);
+	if (!fs::ReadFile(path, content, true))
+		return "";
 
 	return prefix + content;
 }
@@ -710,14 +689,16 @@ std::string ShadowRenderer::readShaderFile(const std::string &path)
 ShadowRenderer *createShadowRenderer(IrrlichtDevice *device, Client *client)
 {
 	// disable if unsupported
-	if (g_settings->getBool("enable_dynamic_shadows") && (
-		device->getVideoDriver()->getDriverType() != video::EDT_OPENGL ||
-		!g_settings->getBool("enable_shaders"))) {
-		g_settings->setBool("enable_dynamic_shadows", false);
+	if (g_settings->getBool("enable_dynamic_shadows")) {
+		// See also checks in builtin/mainmenu/settings/dlg_settings.lua
+		const video::E_DRIVER_TYPE type = device->getVideoDriver()->getDriverType();
+		if (type != video::EDT_OPENGL && type != video::EDT_OPENGL3) {
+			warningstream << "Shadows: disabled dynamic shadows due to being unsupported" << std::endl;
+			g_settings->setBool("enable_dynamic_shadows", false);
+		}
 	}
 
-	if (g_settings->getBool("enable_shaders") &&
-			g_settings->getBool("enable_dynamic_shadows")) {
+	if (g_settings->getBool("enable_dynamic_shadows")) {
 		ShadowRenderer *shadow_renderer = new ShadowRenderer(device, client);
 		shadow_renderer->initialize();
 		return shadow_renderer;

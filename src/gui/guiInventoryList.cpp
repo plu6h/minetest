@@ -1,26 +1,13 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "guiInventoryList.h"
 #include "guiFormSpecMenu.h"
 #include "client/hud.h"
 #include "client/client.h"
+#include "client/renderingengine.h"
+#include <IVideoDriver.h>
 
 GUIInventoryList::GUIInventoryList(gui::IGUIEnvironment *env,
 	gui::IGUIElement *parent,
@@ -98,7 +85,8 @@ void GUIInventoryList::draw()
 		v2s32 p((i % m_geom.X) * m_slot_spacing.X,
 				(i / m_geom.X) * m_slot_spacing.Y);
 		core::rect<s32> rect = imgrect + base_pos + p;
-		ItemStack item = ilist->getItem(item_i);
+		const ItemStack &orig_item = ilist->getItem(item_i);
+		ItemStack item = orig_item;
 
 		bool selected = selected_item
 			&& m_invmgr->getInventory(selected_item->inventoryloc) == inv
@@ -147,13 +135,33 @@ void GUIInventoryList::draw()
 			// Draw item stack
 			drawItemStack(driver, m_font, item, rect, &AbsoluteClippingRect,
 					client, rotation_kind);
-			// Add hovering tooltip
-			if (hovering && !selected_item) {
-				std::string tooltip = item.getDescription(client->idef());
-				if (m_fs_menu->doTooltipAppendItemname())
-					tooltip += "\n[" + item.name + "]";
-				m_fs_menu->addHoveredItemTooltip(tooltip);
-			}
+		}
+
+		// Add hovering tooltip. The tooltip disappears if any item is selected,
+		// including the currently hovered one.
+		bool show_tooltip = !item.empty() && hovering && !selected_item;
+
+		if (RenderingEngine::getLastPointerType() == PointerType::Touch) {
+			// Touchscreen users cannot hover over an item without selecting it.
+			// To allow touchscreen users to see item tooltips, we also show the
+			// tooltip if the item is selected and the finger is still on the
+			// source slot.
+			// The selected amount may be 0 in rare cases during "left-dragging"
+			// (used to distribute items evenly).
+			// In this case, the user doesn't see an item being dragged,
+			// so we don't show the tooltip.
+			// Note: `m_fs_menu->getSelectedAmount() != 0` below refers to the
+			// part of the selected item the user is dragging.
+			// `!item.empty()` would refer to the part of the selected item
+			// remaining in the source slot.
+			show_tooltip |= hovering && selected && m_fs_menu->getSelectedAmount() != 0;
+		}
+
+		if (show_tooltip) {
+			std::string tooltip = orig_item.getDescription(client->idef());
+			if (m_fs_menu->doTooltipAppendItemname())
+				tooltip += "\n[" + orig_item.name + "]";
+			m_fs_menu->addHoveredItemTooltip(tooltip);
 		}
 	}
 

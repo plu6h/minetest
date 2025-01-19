@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 extern "C" {
 #include <lua.h>
@@ -25,6 +10,7 @@ extern "C" {
 #include "util/numeric.h"
 #include "util/serialize.h"
 #include "util/string.h"
+#include "log.h"
 #include "common/c_converter.h"
 #include "common/c_internal.h"
 #include "constants.h"
@@ -57,6 +43,7 @@ extern "C" {
  */
 static void read_v3_aux(lua_State *L, int index)
 {
+	CHECK_POS_TAB(index);
 	lua_pushvalue(L, index);
 	lua_rawgeti(L, LUA_REGISTRYINDEX, CUSTOM_RIDX_READ_VECTOR);
 	lua_insert(L, -2);
@@ -294,19 +281,23 @@ bool read_color(lua_State *L, int index, video::SColor *color)
 
 video::SColor read_ARGB8(lua_State *L, int index)
 {
+	auto clamp_col = [](double c) -> u32 {
+		return std::fmax(0.0, std::fmin(255.0, c));
+	};
+
 	video::SColor color(0);
 	CHECK_TYPE(index, "ARGB color", LUA_TTABLE);
 	lua_getfield(L, index, "a");
-	color.setAlpha(lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0xFF);
+	color.setAlpha(lua_isnumber(L, -1) ? clamp_col(lua_tonumber(L, -1)) : 0xFF);
 	lua_pop(L, 1);
 	lua_getfield(L, index, "r");
-	color.setRed(lua_tonumber(L, -1));
+	color.setRed(clamp_col(lua_tonumber(L, -1)));
 	lua_pop(L, 1);
 	lua_getfield(L, index, "g");
-	color.setGreen(lua_tonumber(L, -1));
+	color.setGreen(clamp_col(lua_tonumber(L, -1)));
 	lua_pop(L, 1);
 	lua_getfield(L, index, "b");
-	color.setBlue(lua_tonumber(L, -1));
+	color.setBlue(clamp_col(lua_tonumber(L, -1)));
 	lua_pop(L, 1);
 	return color;
 }
@@ -335,7 +326,8 @@ bool is_color_table(lua_State *L, int index)
 
 aabb3f read_aabb3f(lua_State *L, int index, f32 scale)
 {
-	aabb3f box;
+	// default value for accidental/historical reasons
+	aabb3f box{-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f};
 	if(lua_istable(L, index)){
 		lua_rawgeti(L, index, 1);
 		box.MinEdge.X = lua_tonumber(L, -1) * scale;
@@ -360,20 +352,20 @@ aabb3f read_aabb3f(lua_State *L, int index, f32 scale)
 	return box;
 }
 
-void push_aabb3f(lua_State *L, aabb3f box)
+void push_aabb3f(lua_State *L, aabb3f box, f32 divisor)
 {
 	lua_createtable(L, 6, 0);
-	lua_pushnumber(L, box.MinEdge.X);
+	lua_pushnumber(L, box.MinEdge.X / divisor);
 	lua_rawseti(L, -2, 1);
-	lua_pushnumber(L, box.MinEdge.Y);
+	lua_pushnumber(L, box.MinEdge.Y / divisor);
 	lua_rawseti(L, -2, 2);
-	lua_pushnumber(L, box.MinEdge.Z);
+	lua_pushnumber(L, box.MinEdge.Z / divisor);
 	lua_rawseti(L, -2, 3);
-	lua_pushnumber(L, box.MaxEdge.X);
+	lua_pushnumber(L, box.MaxEdge.X / divisor);
 	lua_rawseti(L, -2, 4);
-	lua_pushnumber(L, box.MaxEdge.Y);
+	lua_pushnumber(L, box.MaxEdge.Y / divisor);
 	lua_rawseti(L, -2, 5);
-	lua_pushnumber(L, box.MaxEdge.Z);
+	lua_pushnumber(L, box.MaxEdge.Z / divisor);
 	lua_rawseti(L, -2, 6);
 }
 
@@ -403,6 +395,16 @@ std::vector<aabb3f> read_aabb3f_vector(lua_State *L, int index, f32 scale)
 		}
 	}
 	return boxes;
+}
+
+void push_aabb3f_vector(lua_State *L, const std::vector<aabb3f> &boxes, f32 divisor)
+{
+	lua_createtable(L, boxes.size(), 0);
+	int i = 1;
+	for (const aabb3f &box : boxes) {
+		push_aabb3f(L, box, divisor);
+		lua_rawseti(L, -2, i++);
+	}
 }
 
 size_t read_stringlist(lua_State *L, int index, std::vector<std::string> *result)
@@ -470,6 +472,17 @@ bool check_field_or_nil(lua_State *L, int index, int type, const char *fieldname
 bool getstringfield(lua_State *L, int table,
 		const char *fieldname, std::string &result)
 {
+	std::string_view sv;
+	if (getstringfield(L, table, fieldname, sv)) {
+		result = sv;
+		return true;
+	}
+	return false;
+}
+
+bool getstringfield(lua_State *L, int table,
+		const char *fieldname, std::string_view &result)
+{
 	lua_getfield(L, table, fieldname);
 	bool got = false;
 
@@ -477,7 +490,7 @@ bool getstringfield(lua_State *L, int table,
 		size_t len = 0;
 		const char *ptr = lua_tolstring(L, -1, &len);
 		if (ptr) {
-			result.assign(ptr, len);
+			result = std::string_view(ptr, len);
 			got = true;
 		}
 	}

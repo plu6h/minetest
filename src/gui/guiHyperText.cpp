@@ -1,33 +1,21 @@
-/*
-Minetest
-Copyright (C) 2019 EvicenceBKidscode / Pierre-Yves Rollo <dev@pyrollo.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2019 EvicenceBKidscode / Pierre-Yves Rollo <dev@pyrollo.com>
 
 #include "guiHyperText.h"
 #include "guiScrollBar.h"
 #include "client/fontengine.h"
-#include "client/tile.h"
+#include "client/hud.h" // drawItemStack
 #include "IVideoDriver.h"
 #include "client/client.h"
 #include "client/renderingengine.h"
+#include "client/texturesource.h"
 #include "hud.h"
 #include "inventory.h"
 #include "util/string.h"
 #include "irrlicht_changes/CGUITTFont.h"
+#include "mainmenumanager.h"
+#include "porting.h"
 
 using namespace irr::gui;
 
@@ -63,9 +51,15 @@ void ParsedText::Element::setStyle(StyleList &style)
 		this->hovercolor = color;
 
 	unsigned int font_size = std::atoi(style["fontsize"].c_str());
+
 	FontMode font_mode = FM_Standard;
 	if (style["fontstyle"] == "mono")
 		font_mode = FM_Mono;
+
+	// hypertext[] only accepts absolute font size values and has a hardcoded
+	// default font size of 16. This is the only way to make hypertext[]
+	// respect font size settings that I can think of.
+	font_size = myround(font_size / 16.0f * g_fontengine->getFontSize(font_mode));
 
 	FontSpec spec(font_size, font_mode,
 		is_yes(style["bold"]), is_yes(style["italic"]));
@@ -286,8 +280,8 @@ void ParsedText::pushChar(wchar_t c)
 		else
 			return;
 	} else {
-		m_empty_paragraph = false;
 		enterElement(ELEMENT_TEXT);
+		m_empty_paragraph = false;
 	}
 	m_element->text += c;
 }
@@ -414,14 +408,16 @@ u32 ParsedText::parseTag(const wchar_t *text, u32 cursor)
 	AttrsList attrs;
 	while (c != L'>') {
 		std::string attr_name = "";
-		core::stringw attr_val = L"";
+		std::wstring attr_val = L"";
 
+		// Consume whitespace
 		while (c == ' ') {
 			c = text[++cursor];
 			if (c == L'\0' || c == L'=')
 				return 0;
 		}
 
+		// Read attribute name
 		while (c != L' ' && c != L'=') {
 			attr_name += (char)c;
 			c = text[++cursor];
@@ -429,28 +425,51 @@ u32 ParsedText::parseTag(const wchar_t *text, u32 cursor)
 				return 0;
 		}
 
+		// Consume whitespace
 		while (c == L' ') {
 			c = text[++cursor];
 			if (c == L'\0' || c == L'>')
 				return 0;
 		}
 
+		// Skip equals
 		if (c != L'=')
 			return 0;
-
 		c = text[++cursor];
-
 		if (c == L'\0')
 			return 0;
 
-		while (c != L'>' && c != L' ') {
-			attr_val += c;
+		// Read optional quote
+		wchar_t quote_used = 0;
+		if (c == L'"' || c == L'\'') {
+			quote_used = c;
 			c = text[++cursor];
 			if (c == L'\0')
 				return 0;
 		}
 
-		attrs[attr_name] = stringw_to_utf8(attr_val);
+		// Read attribute value
+		bool escape = false;
+		while (escape || (quote_used && c != quote_used) || (!quote_used && c != L'>' && c != L' ')) {
+			if (quote_used && !escape && c == L'\\') {
+				escape = true;
+			} else {
+				escape = false;
+				attr_val += c;
+			}
+			c = text[++cursor];
+			if (c == L'\0')
+				return 0;
+		}
+
+		// Remove quote
+		if (quote_used) {
+			if (c != quote_used)
+				return 0;
+			c = text[++cursor];
+		}
+
+		attrs[attr_name] = wide_to_utf8(attr_val);
 	}
 
 	++cursor; // Last ">"
@@ -996,10 +1015,6 @@ GUIHyperText::GUIHyperText(const wchar_t *text, IGUIEnvironment *environment,
 		m_drawer(text, client, environment, tsrc), m_text_scrollpos(0, 0)
 {
 
-#ifdef _DEBUG
-	setDebugName("GUIHyperText");
-#endif
-
 	IGUISkin *skin = 0;
 	if (Environment)
 		skin = Environment->getSkin();
@@ -1046,14 +1061,10 @@ void GUIHyperText::checkHover(s32 X, s32 Y)
 		}
 	}
 
-#ifndef HAVE_TOUCHSCREENGUI
-	if (m_drawer.m_hovertag)
-		RenderingEngine::get_raw_device()->getCursorControl()->setActiveIcon(
-				gui::ECI_HAND);
-	else
-		RenderingEngine::get_raw_device()->getCursorControl()->setActiveIcon(
-				gui::ECI_NORMAL);
-#endif
+	ICursorControl *cursor_control = RenderingEngine::get_raw_device()->getCursorControl();
+
+	if (cursor_control)
+		cursor_control->setActiveIcon(m_drawer.m_hovertag ? gui::ECI_HAND : gui::ECI_NORMAL);
 }
 
 bool GUIHyperText::OnEvent(const SEvent &event)
@@ -1069,12 +1080,11 @@ bool GUIHyperText::OnEvent(const SEvent &event)
 	if (event.EventType == EET_GUI_EVENT &&
 			event.GUIEvent.EventType == EGET_ELEMENT_LEFT) {
 		m_drawer.m_hovertag = nullptr;
-#ifndef HAVE_TOUCHSCREENGUI
-		gui::ICursorControl *cursor_control =
-				RenderingEngine::get_raw_device()->getCursorControl();
-		if (cursor_control->isVisible())
+
+		ICursorControl *cursor_control = RenderingEngine::get_raw_device()->getCursorControl();
+
+		if (cursor_control && cursor_control->isVisible())
 			cursor_control->setActiveIcon(gui::ECI_NORMAL);
-#endif
 	}
 
 	if (event.EventType == EET_MOUSE_INPUT_EVENT) {
@@ -1082,7 +1092,7 @@ bool GUIHyperText::OnEvent(const SEvent &event)
 			checkHover(event.MouseInput.X, event.MouseInput.Y);
 
 		if (event.MouseInput.Event == EMIE_MOUSE_WHEEL && m_vscrollbar->isVisible()) {
-			m_vscrollbar->setPos(m_vscrollbar->getPos() -
+			m_vscrollbar->setPosInterpolated(m_vscrollbar->getTargetPos() -
 					event.MouseInput.Wheel * m_vscrollbar->getSmallStep());
 			m_text_scrollpos.Y = -m_vscrollbar->getPos();
 			m_drawer.draw(m_display_text_rect, m_text_scrollpos);
@@ -1106,7 +1116,19 @@ bool GUIHyperText::OnEvent(const SEvent &event)
 							newEvent.GUIEvent.EventType = EGET_BUTTON_CLICKED;
 							Parent->OnEvent(newEvent);
 						}
-						break;
+
+						auto url_it = tag->attrs.find("url");
+						if (url_it != tag->attrs.end()) {
+							if (g_gamecallback) {
+								// in game
+								g_gamecallback->showOpenURLDialog(url_it->second);
+							} else {
+								// main menu
+								porting::open_url(url_it->second);
+							}
+						}
+
+						return true;
 					}
 				}
 			}
@@ -1126,8 +1148,16 @@ void GUIHyperText::draw()
 	m_display_text_rect = AbsoluteRect;
 	m_drawer.place(m_display_text_rect);
 
-	// Show scrollbar if text overflow
+	// Show a scrollbar if the text overflows vertically
 	if (m_drawer.getHeight() > m_display_text_rect.getHeight()) {
+		// Showing a scrollbar will reduce the width of the viewport, causing
+		// more text to be wrapped and thus increasing the height of the text.
+		// Therefore, we have to re-layout the text *before* setting the height
+		// of the scrollbar.
+		core::rect<s32> smaller_rect = m_display_text_rect;
+		smaller_rect.LowerRightCorner.X -= m_scrollbar_width;
+		m_drawer.place(smaller_rect);
+
 		m_vscrollbar->setSmallStep(m_display_text_rect.getHeight() * 0.1f);
 		m_vscrollbar->setLargeStep(m_display_text_rect.getHeight() * 0.5f);
 		m_vscrollbar->setMax(m_drawer.getHeight() - m_display_text_rect.getHeight());
@@ -1135,11 +1165,6 @@ void GUIHyperText::draw()
 		m_vscrollbar->setVisible(true);
 
 		m_vscrollbar->setPageSize(s32(m_drawer.getHeight()));
-
-		core::rect<s32> smaller_rect = m_display_text_rect;
-
-		smaller_rect.LowerRightCorner.X -= m_scrollbar_width;
-		m_drawer.place(smaller_rect);
 	} else {
 		m_vscrollbar->setMax(0);
 		m_vscrollbar->setPos(0);

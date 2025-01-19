@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 
 /******************************************************************************/
@@ -39,6 +24,7 @@ extern "C" {
 #include "util/string.h"
 #include "itemgroup.h"
 #include "itemdef.h"
+#include "util/pointabilities.h"
 #include "c_types.h"
 // We do an explicit path include because by default c_content.h include src/client/hud.h
 // prior to the src/hud.h, which is not good on server only build
@@ -69,6 +55,7 @@ struct NoiseParams;
 class Schematic;
 class ServerActiveObject;
 struct collisionMoveResult;
+namespace treegen { struct TreeDef; }
 
 extern struct EnumString es_TileAnimationType[];
 
@@ -82,9 +69,6 @@ void               push_content_features     (lua_State *L,
 
 void               push_nodebox              (lua_State *L,
                                               const NodeBox &box);
-void               push_box                  (lua_State *L,
-                                              const std::vector<aabb3f> &box);
-
 void               push_palette              (lua_State *L,
                                               const std::vector<video::SColor> *palette);
 
@@ -107,9 +91,17 @@ ItemStack          read_item                 (lua_State *L, int index, IItemDefM
 
 struct TileAnimationParams read_animation_definition(lua_State *L, int index);
 
+PointabilityType   read_pointability_type    (lua_State *L, int index);
+Pointabilities     read_pointabilities       (lua_State *L, int index);
+void               push_pointability_type    (lua_State *L, PointabilityType pointable);
+void               push_pointabilities       (lua_State *L, const Pointabilities &pointabilities);
+
 ToolCapabilities   read_tool_capabilities    (lua_State *L, int table);
 void               push_tool_capabilities    (lua_State *L,
                                               const ToolCapabilities &prop);
+WearBarParams      read_wear_bar_params      (lua_State *L, int table);
+void               push_wear_bar_params      (lua_State *L,
+                                              const WearBarParams &prop);
 
 void read_item_definition (lua_State *L, int index, const ItemDefinition &default_def,
 		ItemDefinition &def);
@@ -124,7 +116,7 @@ void               read_object_properties    (lua_State *L, int index,
                                               IItemDefManager *idef);
 
 void               push_object_properties    (lua_State *L,
-                                              ObjectProperties *prop);
+                                              const ObjectProperties *prop);
 
 void               push_inventory_list       (lua_State *L,
                                               const InventoryList &invlist);
@@ -183,13 +175,17 @@ bool               read_noiseparams          (lua_State *L, int index,
                                               NoiseParams *np);
 void               push_noiseparams          (lua_State *L, NoiseParams *np);
 
+bool               read_tree_def             (lua_State *L, int idx,
+                                              const NodeDefManager *ndef,
+                                              treegen::TreeDef &tree_def);
+
 void               luaentity_get             (lua_State *L,u16 id);
 
 bool               push_json_value           (lua_State *L,
                                               const Json::Value &value,
                                               int nullindex);
 void               read_json_value           (lua_State *L, Json::Value &root,
-                                              int index, u8 recursion = 0);
+                                              int index, u16 max_depth);
 
 /*!
  * Pushes a Lua `pointed_thing` to the given Lua stack.

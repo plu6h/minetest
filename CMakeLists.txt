@@ -1,24 +1,17 @@
-cmake_minimum_required(VERSION 3.5)
-
-# Set policies up to 3.9 since we want to enable the IPO option
-if(${CMAKE_VERSION} VERSION_LESS 3.9)
-	cmake_policy(VERSION ${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION})
-else()
-	cmake_policy(VERSION 3.9)
-endif()
+cmake_minimum_required(VERSION 3.12)
 
 # This can be read from ${PROJECT_NAME} after project() is called
-project(minetest)
-set(PROJECT_NAME_CAPITALIZED "Minetest")
+project(luanti)
+set(PROJECT_NAME_CAPITALIZED "Luanti")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 set(GCC_MINIMUM_VERSION "7.5")
-set(CLANG_MINIMUM_VERSION "6.0")
+set(CLANG_MINIMUM_VERSION "7.0.1")
 
 # You should not need to edit these manually, use util/bump_version.sh
 set(VERSION_MAJOR 5)
-set(VERSION_MINOR 8)
+set(VERSION_MINOR 11)
 set(VERSION_PATCH 0)
 set(VERSION_EXTRA "" CACHE STRING "Stuff to append to version string")
 
@@ -37,10 +30,37 @@ if (CMAKE_BUILD_TYPE STREQUAL Debug)
 	set(VERSION_STRING "${VERSION_STRING}-debug")
 endif()
 
-message(STATUS "*** Will build version ${VERSION_STRING} ***")
-
-
 # Configuration options
+set(BUILD_CLIENT TRUE CACHE BOOL "Build client")
+set(BUILD_SERVER FALSE CACHE BOOL "Build server")
+set(BUILD_UNITTESTS TRUE CACHE BOOL "Build unittests")
+set(BUILD_BENCHMARKS FALSE CACHE BOOL "Build benchmarks")
+set(BUILD_DOCUMENTATION TRUE CACHE BOOL "Build documentation")
+
+set(DEFAULT_ENABLE_LTO TRUE)
+# by default don't enable on Debug builds to get faster builds
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(DEFAULT_ENABLE_LTO FALSE)
+endif()
+#### LTO testing list ####
+# - Linux: seems to work always
+# - win32/msvc: works
+# - win32/gcc: fails to link
+# - win32/clang: works
+# - macOS on x86: seems to be fine
+# - macOS on ARM: crashes, see <https://github.com/minetest/minetest/issues/14397>
+# Note: since CMake has no easy architecture detection disabling for Mac entirely
+#### ####
+if((WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU") OR APPLE)
+	set(DEFAULT_ENABLE_LTO FALSE)
+endif()
+set(ENABLE_LTO ${DEFAULT_ENABLE_LTO} CACHE BOOL "Use Link Time Optimization")
+
+set(BUILD_WITH_TRACY FALSE CACHE BOOL
+	"Fetch and build with the Tracy profiler client")
+set(FETCH_TRACY_GIT_TAG "master" CACHE STRING
+	"Git tag for fetching Tracy client. Match with your server (gui) version")
+
 set(DEFAULT_RUN_IN_PLACE FALSE)
 if(WIN32)
 	set(DEFAULT_RUN_IN_PLACE TRUE)
@@ -48,11 +68,13 @@ endif()
 set(RUN_IN_PLACE ${DEFAULT_RUN_IN_PLACE} CACHE BOOL
 	"Run directly in source directory structure")
 
-
-set(BUILD_CLIENT TRUE CACHE BOOL "Build client")
-set(BUILD_SERVER FALSE CACHE BOOL "Build server")
-set(BUILD_UNITTESTS TRUE CACHE BOOL "Build unittests")
-set(BUILD_BENCHMARKS FALSE CACHE BOOL "Build benchmarks")
+message(STATUS "*** Will build version ${VERSION_STRING} ***")
+message(STATUS "BUILD_CLIENT: " ${BUILD_CLIENT})
+message(STATUS "BUILD_SERVER: " ${BUILD_SERVER})
+message(STATUS "BUILD_UNITTESTS: " ${BUILD_UNITTESTS})
+message(STATUS "BUILD_BENCHMARKS: " ${BUILD_BENCHMARKS})
+message(STATUS "BUILD_DOCUMENTATION: " ${BUILD_DOCUMENTATION})
+message(STATUS "RUN_IN_PLACE: " ${RUN_IN_PLACE})
 
 set(WARN_ALL TRUE CACHE BOOL "Enable -Wall for Release build")
 
@@ -70,32 +92,14 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 # Load default options for Android
 if(ANDROID)
 	cmake_minimum_required(VERSION 3.20)
-	include(MinetestAndroidLibs)
+	include(AndroidLibs)
 endif()
 
 
-set(IRRLICHTMT_BUILD_DIR "" CACHE PATH "Path to IrrlichtMt build directory.")
-if(ANDROID)
-	# currently manually provided
-elseif(NOT "${IRRLICHTMT_BUILD_DIR}" STREQUAL "")
-	find_package(IrrlichtMt QUIET
-		PATHS "${IRRLICHTMT_BUILD_DIR}"
-		NO_DEFAULT_PATH
-	)
-
-	if(NOT TARGET IrrlichtMt::IrrlichtMt)
-		# find_package() searches certain subdirectories. ${PATH}/cmake is not
-		# the only one, but it is the one where IrrlichtMt is supposed to export
-		# IrrlichtMtConfig.cmake
-		message(FATAL_ERROR "Could not find IrrlichtMtConfig.cmake in ${IRRLICHTMT_BUILD_DIR}/cmake.")
-	endif()
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/irrlichtmt")
-	message(STATUS "Using user-provided IrrlichtMt at subdirectory 'lib/irrlichtmt'")
+if(TRUE)
+	message(STATUS "Using imported IrrlichtMt at subdirectory 'irr'")
 	if(BUILD_CLIENT)
-		# tell IrrlichtMt to create a static library
-		set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library" FORCE)
-		add_subdirectory(lib/irrlichtmt EXCLUDE_FROM_ALL)
-		unset(BUILD_SHARED_LIBS CACHE)
+		add_subdirectory(irr EXCLUDE_FROM_ALL)
 
 		if(NOT TARGET IrrlichtMt)
 			message(FATAL_ERROR "IrrlichtMt project is missing a CMake target?!")
@@ -103,47 +107,22 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/irrlichtmt")
 	else()
 		add_library(IrrlichtMt::IrrlichtMt INTERFACE IMPORTED)
 		set_target_properties(IrrlichtMt::IrrlichtMt PROPERTIES
-			INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/lib/irrlichtmt/include")
-	endif()
-else()
-	find_package(IrrlichtMt QUIET)
-	if(NOT TARGET IrrlichtMt::IrrlichtMt)
-		string(CONCAT explanation_msg
-			"The Minetest team has forked Irrlicht to make their own customizations. "
-			"It can be found here: https://github.com/minetest/irrlicht\n"
-			"For example use: git clone --depth=1 https://github.com/minetest/irrlicht lib/irrlichtmt\n")
-		if(BUILD_CLIENT)
-			message(FATAL_ERROR "IrrlichtMt is required to build the client, but it was not found.\n${explanation_msg}")
-		endif()
-
-		include(MinetestFindIrrlichtHeaders)
-		if(NOT IRRLICHT_INCLUDE_DIR)
-			message(FATAL_ERROR "IrrlichtMt headers are required to build the server, but none found.\n${explanation_msg}")
-		endif()
-		message(STATUS "Found IrrlichtMt headers: ${IRRLICHT_INCLUDE_DIR}")
-		add_library(IrrlichtMt::IrrlichtMt INTERFACE IMPORTED)
-		# Note that we can't use target_include_directories() since that doesn't work for IMPORTED targets before CMake 3.11
-		set_target_properties(IrrlichtMt::IrrlichtMt PROPERTIES
-			INTERFACE_INCLUDE_DIRECTORIES "${IRRLICHT_INCLUDE_DIR}")
+			INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/irr/include")
 	endif()
 endif()
 
-if(ANDROID)
-	# skipped for now
-elseif(BUILD_CLIENT AND TARGET IrrlichtMt::IrrlichtMt)
-	# retrieve version somehow
-	if(NOT IrrlichtMt_VERSION)
-		get_target_property(IrrlichtMt_VERSION IrrlichtMt VERSION)
+if (ENABLE_LTO OR CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+	include(CheckIPOSupported)
+	check_ipo_supported(RESULT lto_supported OUTPUT lto_output)
+	if(lto_supported)
+		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+		message(STATUS "LTO/IPO is enabled")
+	else()
+		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
+		message(STATUS "LTO/IPO was requested but is not supported by the compiler: ${lto_output}")
 	endif()
-	message(STATUS "Found IrrlichtMt ${IrrlichtMt_VERSION}")
-
-	set(TARGET_VER_S 1.9.0mt12)
-	string(REPLACE "mt" "." TARGET_VER ${TARGET_VER_S})
-	if(IrrlichtMt_VERSION VERSION_LESS ${TARGET_VER})
-		message(FATAL_ERROR "At least IrrlichtMt ${TARGET_VER_S} is required to build")
-	elseif(NOT DEVELOPMENT_BUILD AND IrrlichtMt_VERSION VERSION_GREATER ${TARGET_VER})
-		message(FATAL_ERROR "IrrlichtMt ${TARGET_VER_S} is required to build")
-	endif()
+else()
+	message(STATUS "LTO/IPO is not enabled")
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -182,7 +161,7 @@ elseif(UNIX) # Linux, BSD etc
 		set(EXAMPLE_CONF_DIR ".")
 		set(MANDIR "unix/man")
 		set(XDG_APPS_DIR "unix/applications")
-		set(APPDATADIR "unix/metainfo")
+		set(METAINFODIR "unix/metainfo")
 		set(ICONDIR "unix/icons")
 		set(LOCALEDIR "locale")
 	else()
@@ -193,7 +172,7 @@ elseif(UNIX) # Linux, BSD etc
 		set(MANDIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_MANDIR}")
 		set(EXAMPLE_CONF_DIR ${DOCDIR})
 		set(XDG_APPS_DIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/applications")
-		set(APPDATADIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/metainfo")
+		set(METAINFODIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/metainfo")
 		set(ICONDIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/icons")
 		set(LOCALEDIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LOCALEDIR}")
 	endif()
@@ -257,9 +236,6 @@ if(RUN_IN_PLACE)
 	install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/textures/texture_packs_here.txt" DESTINATION "${SHAREDIR}/textures")
 endif()
 
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/games/minetest_game" DESTINATION "${SHAREDIR}/games/"
-	COMPONENT "SUBGAME_MINETEST_GAME" OPTIONAL PATTERN ".git*" EXCLUDE )
-
 set(INSTALL_DEVTEST FALSE CACHE BOOL "Install Development Test")
 
 if(INSTALL_DEVTEST)
@@ -281,35 +257,42 @@ install(FILES "doc/lua_api.md" DESTINATION "${DOCDIR}" COMPONENT "Docs")
 install(FILES "doc/client_lua_api.md" DESTINATION "${DOCDIR}" COMPONENT "Docs")
 install(FILES "doc/menu_lua_api.md" DESTINATION "${DOCDIR}" COMPONENT "Docs")
 install(FILES "doc/texture_packs.md" DESTINATION "${DOCDIR}" COMPONENT "Docs")
-install(FILES "doc/world_format.txt" DESTINATION "${DOCDIR}" COMPONENT "Docs")
+install(FILES "doc/world_format.md" DESTINATION "${DOCDIR}" COMPONENT "Docs")
 install(FILES "minetest.conf.example" DESTINATION "${EXAMPLE_CONF_DIR}")
 
 if(UNIX AND NOT APPLE)
-	install(FILES "doc/minetest.6" "doc/minetestserver.6" DESTINATION "${MANDIR}/man6")
+	install(FILES "doc/luanti.6" "doc/luantiserver.6" DESTINATION "${MANDIR}/man6")
 	install(FILES "misc/net.minetest.minetest.desktop" DESTINATION "${XDG_APPS_DIR}")
-	install(FILES "misc/net.minetest.minetest.appdata.xml" DESTINATION "${APPDATADIR}")
-	install(FILES "misc/minetest.svg" DESTINATION "${ICONDIR}/hicolor/scalable/apps")
-	install(FILES "misc/minetest-xorg-icon-128.png"
+	install(FILES "misc/net.minetest.minetest.metainfo.xml" DESTINATION "${METAINFODIR}")
+	install(FILES "misc/luanti.svg" DESTINATION "${ICONDIR}/hicolor/scalable/apps")
+	install(FILES "misc/luanti-xorg-icon-128.png"
 		DESTINATION "${ICONDIR}/hicolor/128x128/apps"
-		RENAME "minetest.png")
+		RENAME "luanti.png")
 endif()
 
 if(APPLE)
-	install(FILES "misc/minetest-icon.icns" DESTINATION "${SHAREDIR}")
-	install(FILES "misc/Info.plist" DESTINATION "${BUNDLE_PATH}/Contents")
+	install(FILES "misc/luanti-icon.icns" DESTINATION "${SHAREDIR}")
+	install(FILES "${CMAKE_BINARY_DIR}/Info.plist" DESTINATION "${BUNDLE_PATH}/Contents")
+endif()
+
+if(CMAKE_GENERATOR STREQUAL "Xcode")
+	set(client_RESOURCES "${CMAKE_SOURCE_DIR}/misc/luanti-icon.icns")
 endif()
 
 # Library pack
 find_package(GMP REQUIRED)
-find_package(Json REQUIRED)
+find_package(Json 1.0.0 REQUIRED)
 find_package(Lua REQUIRED)
 if(NOT USE_LUAJIT)
 	add_subdirectory(lib/bitop)
 endif()
+add_subdirectory(lib/sha256)
 
-if(BUILD_BENCHMARKS)
+if(BUILD_UNITTESTS OR BUILD_BENCHMARKS)
 	add_subdirectory(lib/catch2)
 endif()
+
+add_subdirectory(lib/tiniergltf)
 
 # Subdirectories
 # Be sure to add all relevant definitions above this
@@ -328,17 +311,7 @@ include(CPackComponent)
 
 cpack_add_component(Docs
 	DISPLAY_NAME "Documentation"
-	DESCRIPTION "Documentation about Minetest and Minetest modding"
-)
-
-cpack_add_component(SUBGAME_MINETEST_GAME
-	DISPLAY_NAME "Minetest Game"
-	DESCRIPTION "The default game bundled in the Minetest engine. Mainly used as a modding base."
-	GROUP "Games"
-)
-
-cpack_add_component_group(Subgames
-	DESCRIPTION "Games for the Minetest engine."
+	DESCRIPTION "Documentation about ${PROJECT_NAME_CAPITALIZED} and ${PROJECT_NAME_CAPITALIZED} modding"
 )
 
 if(WIN32)
@@ -362,7 +335,7 @@ if(WIN32)
 		set(CPACK_CREATE_DESKTOP_LINKS ${PROJECT_NAME})
 		set(CPACK_PACKAGING_INSTALL_PREFIX "/${PROJECT_NAME_CAPITALIZED}")
 
-		set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/misc/minetest-icon.ico")
+		set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/misc/luanti-icon.ico")
 		# Supported languages can be found at
 		# http://wixtoolset.org/documentation/manual/v3/wixui/wixui_localization.html
 		#set(CPACK_WIX_CULTURES "ar-SA,bg-BG,ca-ES,hr-HR,cs-CZ,da-DK,nl-NL,en-US,et-EE,fi-FI,fr-FR,de-DE")
@@ -394,13 +367,31 @@ include(CPack)
 
 
 # Add a target to generate API documentation with Doxygen
-find_package(Doxygen)
-if(DOXYGEN_FOUND)
-	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/doc/Doxyfile.in
-			${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile @ONLY)
-	add_custom_target(doc
-		${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile
-		WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/doc
-		COMMENT "Generating API documentation with Doxygen" VERBATIM
+if(BUILD_DOCUMENTATION)
+	find_package(Doxygen)
+	if(DOXYGEN_FOUND)
+		configure_file(${CMAKE_CURRENT_SOURCE_DIR}/doc/Doxyfile.in
+				${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile @ONLY)
+		add_custom_target(doc
+			${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile
+			WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/doc
+			COMMENT "Generating API documentation with Doxygen" VERBATIM
+		)
+	endif()
+endif()
+
+# Fetch Tracy
+if(BUILD_WITH_TRACY)
+	include(FetchContent)
+
+	message(STATUS "Fetching Tracy (${FETCH_TRACY_GIT_TAG})...")
+	FetchContent_Declare(
+		tracy
+		GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+		GIT_TAG ${FETCH_TRACY_GIT_TAG}
+		GIT_SHALLOW TRUE
+		GIT_PROGRESS TRUE
 	)
+	FetchContent_MakeAvailable(tracy)
+	message(STATUS "Fetching Tracy - done")
 endif()

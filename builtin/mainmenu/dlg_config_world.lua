@@ -1,4 +1,4 @@
---Minetest
+--Luanti
 --Copyright (C) 2013 sapier
 --
 --This program is free software; you can redistribute it and/or modify
@@ -126,7 +126,7 @@ local function get_formspec(data)
 	local retval =
 		"size[11.5,7.5,true]" ..
 		"label[0.5,0;" .. fgettext("World:") .. "]" ..
-		"label[1.75,0;" .. data.worldspec.name .. "]"
+		"label[1.75,0;" .. core.formspec_escape(data.worldspec.name) .. "]"
 
 	if mod.is_modpack or mod.type == "game" then
 		local info = core.formspec_escape(
@@ -245,7 +245,7 @@ local function get_formspec(data)
 
 	return retval ..
 		"tablecolumns[color;tree;image,align=inline,width=1.5,0=" .. core.formspec_escape(defaulttexturedir .. "blank.png") ..
-			",1=" .. core.formspec_escape(defaulttexturedir .. "checkbox_16_white.png") ..
+			",1=" .. core.formspec_escape(defaulttexturedir .. "checkbox_16.png") ..
 			",2=" .. core.formspec_escape(defaulttexturedir .. "error_icon_orange.png") ..
 			",3=" .. core.formspec_escape(defaulttexturedir .. "error_icon_red.png") .. ";text]" ..
 		"table[5.5,0.75;5.75,6;world_config_modlist;" ..
@@ -334,7 +334,7 @@ local function handle_buttons(this, fields)
 	if fields.btn_config_world_cdb then
 		this.data.list = nil
 
-		local dlg = create_store_dlg("mod")
+		local dlg = create_contentdb_dlg("mod")
 		dlg:set_parent(this)
 		this:hide()
 		dlg:show()

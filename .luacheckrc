@@ -10,16 +10,19 @@ ignore = {
 read_globals = {
 	"ItemStack",
 	"INIT",
+	"PLATFORM",
 	"DIR_DELIM",
 	"dump", "dump2",
 	"fgettext", "fgettext_ne",
 	"vector",
 	"VoxelArea",
+	"VoxelManip",
 	"profiler",
 	"Settings",
+	"PerlinNoise", "PerlinNoiseMap",
 
 	string = {fields = {"split", "trim"}},
-	table  = {fields = {"copy", "getn", "indexof", "insert_all"}},
+	table  = {fields = {"copy", "getn", "indexof", "keyof", "insert_all"}},
 	math   = {fields = {"hypot", "round"}},
 }
 
@@ -36,6 +39,12 @@ files["builtin/client/register.lua"] = {
 	}
 }
 
+files["builtin/common/math.lua"] = {
+	globals = {
+		"math",
+	},
+}
+
 files["builtin/common/misc_helpers.lua"] = {
 	globals = {
 		"dump", "dump2", "table", "math", "string",
@@ -45,7 +54,7 @@ files["builtin/common/misc_helpers.lua"] = {
 }
 
 files["builtin/common/vector.lua"] = {
-	globals = { "vector" },
+	globals = { "vector", "math" },
 }
 
 files["builtin/game/voxelarea.lua"] = {
@@ -67,11 +76,6 @@ files["builtin/mainmenu"] = {
 	globals = {
 		"gamedata",
 	},
-
-	read_globals = {
-		"PLATFORM",
-		"TOUCHSCREEN_GUI",
-	},
 }
 
 files["builtin/common/tests"] = {
@@ -79,11 +83,5 @@ files["builtin/common/tests"] = {
 		"describe",
 		"it",
 		"assert",
-	},
-}
-
-files["builtin/fstk"] = {
-	read_globals = {
-		"TOUCHSCREEN_GUI",
 	},
 }

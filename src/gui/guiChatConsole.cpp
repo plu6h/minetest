@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "guiChatConsole.h"
 #include "chat.h"
@@ -25,12 +10,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "client/keycode.h"
 #include "settings.h"
 #include "porting.h"
-#include "client/tile.h"
+#include "client/texturesource.h"
 #include "client/fontengine.h"
 #include "log.h"
 #include "gettext.h"
 #include "irrlicht_changes/CGUITTFont.h"
 #include "util/string.h"
+#include "guiScrollBar.h"
 #include <string>
 
 inline u32 clamp_u8(s32 value)
@@ -41,6 +27,11 @@ inline u32 clamp_u8(s32 value)
 inline bool isInCtrlKeys(const irr::EKEY_CODE& kc)
 {
 	return kc == KEY_LCONTROL || kc == KEY_RCONTROL || kc == KEY_CONTROL;
+}
+
+inline u32 getScrollbarSize(IGUIEnvironment* env)
+{
+	return env->getSkin()->getSize(gui::EGDS_SCROLLBAR_SIZE);
 }
 
 GUIChatConsole::GUIChatConsole(
@@ -70,22 +61,21 @@ GUIChatConsole::GUIChatConsole(
 		m_background_color.setGreen(255);
 		m_background_color.setBlue(255);
 	} else {
-		v3f console_color = g_settings->getV3F("console_color");
+		v3f console_color = g_settings->getV3F("console_color").value_or(v3f());
 		m_background_color.setRed(clamp_u8(myround(console_color.X)));
 		m_background_color.setGreen(clamp_u8(myround(console_color.Y)));
 		m_background_color.setBlue(clamp_u8(myround(console_color.Z)));
 	}
 
 	const u16 chat_font_size = g_settings->getU16("chat_font_size");
-	m_font = g_fontengine->getFont(chat_font_size != 0 ?
-		rangelim(chat_font_size, 5, 72) : FONT_SIZE_UNSPECIFIED, FM_Mono);
+	m_font.grab(g_fontengine->getFont(chat_font_size != 0 ?
+		rangelim(chat_font_size, 5, 72) : FONT_SIZE_UNSPECIFIED, FM_Mono));
 
 	if (!m_font) {
 		errorstream << "GUIChatConsole: Unable to load mono font" << std::endl;
 	} else {
 		core::dimension2d<u32> dim = m_font->getDimension(L"M");
 		m_fontsize = v2u32(dim.Width, dim.Height);
-		m_font->grab();
 	}
 	m_fontsize.X = MYMAX(m_fontsize.X, 1);
 	m_fontsize.Y = MYMAX(m_fontsize.Y, 1);
@@ -96,25 +86,27 @@ GUIChatConsole::GUIChatConsole(
 	// track ctrl keys for mouse event
 	m_is_ctrl_down = false;
 	m_cache_clickable_chat_weblinks = g_settings->getBool("clickable_chat_weblinks");
-}
 
-GUIChatConsole::~GUIChatConsole()
-{
-	if (m_font)
-		m_font->drop();
+	m_scrollbar.reset(new GUIScrollBar(env, this, -1, core::rect<s32>(0, 0, 30, m_height), false, true, tsrc));
+	m_scrollbar->setSubElement(true);
+	m_scrollbar->setLargeStep(1);
+	m_scrollbar->setSmallStep(1);
 }
 
 void GUIChatConsole::openConsole(f32 scale)
 {
+	if (m_open)
+		return;
+
 	assert(scale > 0.0f && scale <= 1.0f);
 
 	m_open = true;
+
 	m_desired_height_fraction = scale;
 	m_desired_height = scale * m_screensize.Y;
 	reformatConsole();
 	m_animate_time_old = porting::getTimeMs();
 	IGUIElement::setVisible(true);
-	Environment->setFocus(this);
 	m_menumgr->createdMenu(this);
 }
 
@@ -133,6 +125,7 @@ void GUIChatConsole::closeConsole()
 	m_open = false;
 	Environment->removeFocus(this);
 	m_menumgr->deletingMenu(this);
+	m_scrollbar->setVisible(false);
 }
 
 void GUIChatConsole::closeConsoleAtOnce()
@@ -192,6 +185,10 @@ void GUIChatConsole::draw()
 		m_screensize = screensize;
 		m_desired_height = m_desired_height_fraction * m_screensize.Y;
 		reformatConsole();
+	} else if (!m_scrollbar->getAbsolutePosition().isPointInside(core::vector2di(screensize.X, m_height))) {
+		// the height of the chat window is no longer the height of the scrollbar
+		// happens while opening/closing the window
+		updateScrollbar(true);
 	}
 
 	// Animation
@@ -216,6 +213,9 @@ void GUIChatConsole::reformatConsole()
 	s32 rows = m_desired_height / m_fontsize.Y - 1; // make room for the input prompt
 	if (cols <= 0 || rows <= 0)
 		cols = rows = 0;
+
+	updateScrollbar(true);
+
 	recalculateConsolePosition();
 	m_chat_backend->reformat(cols, rows);
 }
@@ -305,10 +305,17 @@ void GUIChatConsole::drawBackground()
 
 void GUIChatConsole::drawText()
 {
-	if (m_font == NULL)
+	if (!m_font)
 		return;
 
 	ChatBuffer& buf = m_chat_backend->getConsoleBuffer();
+
+	core::recti rect;
+	if (m_scrollbar->isVisible())
+		rect = core::rect<s32> (0, 0, m_screensize.X - getScrollbarSize(Environment), m_height);
+	else
+		rect = AbsoluteClippingRect;
+
 	for (u32 row = 0; row < buf.getRows(); ++row)
 	{
 		const ChatFormattedLine& line = buf.getFormattedLine(row);
@@ -327,13 +334,13 @@ void GUIChatConsole::drawText()
 
 			if (m_font->getType() == irr::gui::EGFT_CUSTOM) {
 				// Draw colored text if possible
-				gui::CGUITTFont *tmp = static_cast<gui::CGUITTFont*>(m_font);
+				auto *tmp = static_cast<gui::CGUITTFont*>(m_font.get());
 				tmp->draw(
 					fragment.text,
 					destrect,
 					false,
 					false,
-					&AbsoluteClippingRect);
+					&rect);
 			} else {
 				// Otherwise use standard text
 				m_font->draw(
@@ -342,10 +349,12 @@ void GUIChatConsole::drawText()
 					video::SColor(255, 255, 255, 255),
 					false,
 					false,
-					&AbsoluteClippingRect);
+					&rect);
 			}
 		}
 	}
+
+	updateScrollbar();
 }
 
 void GUIChatConsole::drawPrompt()
@@ -645,7 +654,7 @@ bool GUIChatConsole::OnEvent(const SEvent& event)
 		{
 			// Tab or Shift-Tab pressed
 			// Nick completion
-			std::list<std::string> names = m_client->getConnectedPlayerNames();
+			auto names = m_client->getConnectedPlayerNames();
 			bool backwards = event.KeyInput.Shift;
 			prompt.nickCompletion(names, backwards);
 			return true;
@@ -679,12 +688,8 @@ bool GUIChatConsole::OnEvent(const SEvent& event)
 				if (!was_url_pressed
 						&& event.MouseInput.Event == EMIE_MMOUSE_PRESSED_DOWN) {
 					// Paste primary selection at cursor pos
-#if IRRLICHT_VERSION_MT_REVISION >= 11
 					const c8 *text = Environment->getOSOperator()
 							->getTextFromPrimarySelection();
-#else
-					const c8 *text = nullptr;
-#endif
 					if (text)
 						prompt.input(utf8_to_wide(text));
 				}
@@ -695,6 +700,11 @@ bool GUIChatConsole::OnEvent(const SEvent& event)
 	{
 		prompt.input(std::wstring(event.StringInput.Str->c_str()));
 		return true;
+	}
+	else if (event.EventType == EET_GUI_EVENT && event.GUIEvent.EventType == EGET_SCROLL_BAR_CHANGED &&
+			(void*) event.GUIEvent.Caller == (void*) m_scrollbar.get())
+	{
+		m_chat_backend->getConsoleBuffer().scrollAbsolute(m_scrollbar->getPos());
 	}
 
 	return Parent ? Parent->OnEvent(event) : false;
@@ -708,6 +718,7 @@ void GUIChatConsole::setVisible(bool visible)
 		m_height = 0;
 		recalculateConsolePosition();
 	}
+	m_scrollbar->setVisible(visible);
 }
 
 bool GUIChatConsole::weblinkClick(s32 col, s32 row)
@@ -775,9 +786,22 @@ bool GUIChatConsole::weblinkClick(s32 col, s32 row)
 
 void GUIChatConsole::updatePrimarySelection()
 {
-#if IRRLICHT_VERSION_MT_REVISION >= 11
 	std::wstring wselected = m_chat_backend->getPrompt().getSelection();
 	std::string selected = wide_to_utf8(wselected);
 	Environment->getOSOperator()->copyToPrimarySelection(selected.c_str());
-#endif
+}
+
+void GUIChatConsole::updateScrollbar(bool update_size)
+{
+	ChatBuffer &buf = m_chat_backend->getConsoleBuffer();
+	m_scrollbar->setMin(buf.getTopScrollPos());
+	m_scrollbar->setMax(buf.getBottomScrollPos());
+	m_scrollbar->setPos(buf.getScrollPosition());
+	m_scrollbar->setPageSize(m_fontsize.Y * buf.getLineCount());
+	m_scrollbar->setVisible(m_scrollbar->getMin() != m_scrollbar->getMax());
+
+	if (update_size) {
+		const core::rect<s32> rect (m_screensize.X - getScrollbarSize(Environment), 0, m_screensize.X, m_height);
+		m_scrollbar->setRelativePosition(rect);
+	}
 }

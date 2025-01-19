@@ -1,4 +1,4 @@
---Minetest
+--Luanti
 --Copyright (C) 2014 sapier
 --
 --This program is free software; you can redistribute it and/or modify
@@ -53,11 +53,10 @@ end
 
 -- Apply menu changes from given game
 function apply_game(game)
-	core.set_topleft_text(game.name)
 	core.settings:set("menu_last_game", game.id)
 	menudata.worldlist:set_filtercriteria(game.id)
 
-	mm_game_theme.update("singleplayer", game) -- this refreshes the formspec
+	mm_game_theme.set_game(game)
 
 	local index = filterlist.get_current_index(menudata.worldlist,
 		tonumber(core.settings:get("mainmenu_last_selected_world")))
@@ -93,10 +92,16 @@ function singleplayer_refresh_gamebar()
 		end
 	end
 
+	local TOUCH_GUI = core.settings:get_bool("touch_gui")
+
+	local gamebar_pos_y = MAIN_TAB_H
+		+ TABHEADER_H -- tabheader included in formspec size
+		+ (TOUCH_GUI and GAMEBAR_OFFSET_TOUCH or GAMEBAR_OFFSET_DESKTOP)
+
 	local btnbar = buttonbar_create(
 			"game_button_bar",
-			TOUCHSCREEN_GUI and {x = 0, y = 7.25} or {x = 0, y = 7.475},
-			{x = 15.5, y = 1.25},
+			{x = 0, y = gamebar_pos_y},
+			{x = MAIN_TAB_W, y = GAMEBAR_H},
 			"#000000",
 			game_buttonbar_button_handler)
 
@@ -157,10 +162,18 @@ local function get_formspec(tabview, name, tabdata)
 
 	-- Point the player to ContentDB when no games are found
 	if #pkgmgr.games == 0 then
+		local W = tabview.width
+		local H = tabview.height
+
+		local hypertext = "<global valign=middle halign=center size=18>" ..
+				fgettext_ne("Luanti is a game-creation platform that allows you to play many different games.") .. "\n" ..
+				fgettext_ne("Luanti doesn't come with a game by default.") .. " " ..
+				fgettext_ne("You need to install a game before you can create a world.")
+
+		local button_y = H * 2/3 - 0.6
 		return table.concat({
-			"style[label_button;border=false]",
-			"button[2.75,1.5;10,1;label_button;", fgettext("You have no games installed."), "]",
-			"button[5.25,3.5;5,1.2;game_open_cdb;", fgettext("Install a game"), "]"})
+			"hypertext[0.375,0;", W - 2*0.375, ",", button_y, ";ht;", core.formspec_escape(hypertext), "]",
+			"button[5.25,", button_y, ";5,1.2;game_open_cdb;", fgettext("Install a game"), "]"})
 	end
 
 	local retval = ""
@@ -265,7 +278,7 @@ local function main_button_handler(this, fields, name, tabdata)
 
 	if fields.game_open_cdb then
 		local maintab = ui.find_by_name("maintab")
-		local dlg = create_store_dlg("game")
+		local dlg = create_contentdb_dlg("game")
 		dlg:set_parent(maintab)
 		maintab:hide()
 		dlg:show()
@@ -396,7 +409,6 @@ local function main_button_handler(this, fields, name, tabdata)
 		create_world_dlg:set_parent(this)
 		this:hide()
 		create_world_dlg:show()
-		mm_game_theme.update("singleplayer", current_game())
 		return true
 	end
 
@@ -413,7 +425,6 @@ local function main_button_handler(this, fields, name, tabdata)
 				delete_world_dlg:set_parent(this)
 				this:hide()
 				delete_world_dlg:show()
-				mm_game_theme.update("singleplayer",current_game())
 			end
 		end
 
@@ -431,7 +442,6 @@ local function main_button_handler(this, fields, name, tabdata)
 				configdialog:set_parent(this)
 				this:hide()
 				configdialog:show()
-				mm_game_theme.update("singleplayer",current_game())
 			end
 		end
 
@@ -439,26 +449,23 @@ local function main_button_handler(this, fields, name, tabdata)
 	end
 end
 
-local function on_change(type, old_tab, new_tab)
-	if (type == "ENTER") then
+local function on_change(type)
+	if type == "ENTER" then
 		local game = current_game()
 		if game then
 			apply_game(game)
+		else
+			mm_game_theme.set_engine()
 		end
 
 		if singleplayer_refresh_gamebar() then
 			ui.find_by_name("game_button_bar"):show()
 		end
-	else
+	elseif type == "LEAVE" then
 		menudata.worldlist:set_filtercriteria(nil)
 		local gamebar = ui.find_by_name("game_button_bar")
 		if gamebar then
 			gamebar:hide()
-		end
-		core.set_topleft_text("")
-		-- If new_tab is nil, a dialog is being shown; avoid resetting the theme
-		if new_tab then
-			mm_game_theme.update(new_tab,nil)
 		end
 	end
 end

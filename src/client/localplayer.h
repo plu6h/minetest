@@ -1,30 +1,14 @@
-/*
-Minetest
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #pragma once
 
 #include "player.h"
 #include "environment.h"
 #include "constants.h"
-#include "settings.h"
 #include "lighting.h"
-#include <list>
+#include <string>
 
 class Client;
 class Environment;
@@ -32,6 +16,7 @@ class GenericCAO;
 class ClientActiveObject;
 class ClientEnvironment;
 class IGameDef;
+struct CollisionInfo;
 struct collisionMoveResult;
 
 enum class LocalPlayerAnimation
@@ -39,14 +24,34 @@ enum class LocalPlayerAnimation
 	NO_ANIM,
 	WALK_ANIM,
 	DIG_ANIM,
-	WD_ANIM
-}; // no local animation, walking, digging, both
+	WD_ANIM // walking + digging
+};
+
+struct PlayerSettings
+{
+	bool free_move = false;
+	bool pitch_move = false;
+	bool fast_move = false;
+	bool continuous_forward = false;
+	bool always_fly_fast = false;
+	bool aux1_descends = false;
+	bool noclip = false;
+	bool autojump = false;
+
+	void readGlobalSettings();
+	void registerSettingsCallback();
+	void deregisterSettingsCallback();
+
+private:
+	static void settingsChangedCallback(const std::string &name, void *data);
+};
 
 class LocalPlayer : public Player
 {
 public:
-	LocalPlayer(Client *client, const char *name);
-	virtual ~LocalPlayer() = default;
+
+	LocalPlayer(Client *client, const std::string &name);
+	virtual ~LocalPlayer();
 
 	// Initialize hp to 0, so that no hearts will be shown if server
 	// doesn't support health points
@@ -64,11 +69,8 @@ public:
 
 	f32 gravity = 0; // total downwards acceleration
 
-	void move(f32 dtime, Environment *env, f32 pos_max_d);
-	void move(f32 dtime, Environment *env, f32 pos_max_d,
-			std::vector<CollisionInfo> *collision_info);
-	// Temporary option for old move code
-	void old_move(f32 dtime, Environment *env, f32 pos_max_d,
+	void move(f32 dtime, Environment *env);
+	void move(f32 dtime, Environment *env,
 			std::vector<CollisionInfo> *collision_info);
 
 	void applyControl(float dtime, Environment *env);
@@ -85,6 +87,8 @@ public:
 	u8 last_camera_fov = 0;
 	u8 last_wanted_range = 0;
 	bool last_camera_inverted = false;
+	f32 last_movement_speed = 0.0f;
+	f32 last_movement_dir = 0.0f;
 
 	float camera_impact = 0.0f;
 
@@ -129,6 +133,11 @@ public:
 		m_position = position;
 		m_sneak_node_exists = false;
 	}
+	inline void addPosition(const v3f &added_pos)
+	{
+		m_position += added_pos;
+		m_sneak_node_exists = false;
+	}
 
 	v3f getPosition() const { return m_position; }
 
@@ -156,15 +165,18 @@ public:
 
 	inline Lighting& getLighting() { return m_lighting; }
 
+	inline PlayerSettings &getPlayerSettings() { return m_player_settings; }
+
 private:
 	void accelerate(const v3f &target_speed, const f32 max_increase_H,
 		const f32 max_increase_V, const bool use_pitch);
 	bool updateSneakNode(Map *map, const v3f &position, const v3f &sneak_max);
 	float getSlipFactor(Environment *env, const v3f &speedH);
+	void old_move(f32 dtime, Environment *env,
+			std::vector<CollisionInfo> *collision_info);
 	void handleAutojump(f32 dtime, Environment *env,
 		const collisionMoveResult &result,
-		const v3f &position_before_move, const v3f &speed_before_move,
-		f32 pos_max_d);
+		v3f position_before_move, v3f speed_before_move);
 
 	v3f m_position;
 	v3s16 m_standing_node;
@@ -206,5 +218,7 @@ private:
 
 	GenericCAO *m_cao = nullptr;
 	Client *m_client;
+
+	PlayerSettings m_player_settings;
 	Lighting m_lighting;
 };

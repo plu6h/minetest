@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2010-2017 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2017 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "util/serialize.h"
 #include "util/pointedthing.h"
@@ -40,68 +25,16 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "client/renderingengine.h"
 
 /*
-	CAOShaderConstantSetter
-*/
-
-//! Shader constant setter for passing material emissive color to the CAO object_shader
-class CAOShaderConstantSetter : public IShaderConstantSetter
-{
-public:
-	CAOShaderConstantSetter():
-			m_emissive_color_setting("emissiveColor")
-	{}
-
-	~CAOShaderConstantSetter() override = default;
-
-	void onSetConstants(video::IMaterialRendererServices *services) override
-	{
-		// Ambient color
-		video::SColorf emissive_color(m_emissive_color);
-
-		float as_array[4] = {
-			emissive_color.r,
-			emissive_color.g,
-			emissive_color.b,
-			emissive_color.a,
-		};
-		m_emissive_color_setting.set(as_array, services);
-	}
-
-	void onSetMaterial(const video::SMaterial& material) override
-	{
-		m_emissive_color = material.EmissiveColor;
-	}
-
-private:
-	video::SColor m_emissive_color;
-	CachedPixelShaderSetting<float, 4> m_emissive_color_setting;
-};
-
-class CAOShaderConstantSetterFactory : public IShaderConstantSetterFactory
-{
-public:
-	CAOShaderConstantSetterFactory()
-	{}
-
-	virtual IShaderConstantSetter* create()
-	{
-		return new CAOShaderConstantSetter();
-	}
-};
-
-/*
 	ClientEnvironment
 */
 
-ClientEnvironment::ClientEnvironment(ClientMap *map,
+ClientEnvironment::ClientEnvironment(irr_ptr<ClientMap> map,
 	ITextureSource *texturesource, Client *client):
 	Environment(client),
-	m_map(map),
+	m_map(std::move(map)),
 	m_texturesource(texturesource),
 	m_client(client)
 {
-	auto *shdrsrc = m_client->getShaderSource();
-	shdrsrc->addShaderConstantSetterFactory(new CAOShaderConstantSetterFactory());
 }
 
 ClientEnvironment::~ClientEnvironment()
@@ -112,18 +45,17 @@ ClientEnvironment::~ClientEnvironment()
 		delete simple_object;
 	}
 
-	// Drop/delete map
-	m_map->drop();
+	m_map.reset();
 
 	delete m_local_player;
 }
 
-Map & ClientEnvironment::getMap()
+Map &ClientEnvironment::getMap()
 {
 	return *m_map;
 }
 
-ClientMap & ClientEnvironment::getClientMap()
+ClientMap &ClientEnvironment::getClientMap()
 {
 	return *m_map;
 }
@@ -164,7 +96,6 @@ void ClientEnvironment::step(float dtime)
 	/*
 		Maximum position increment
 	*/
-	//f32 position_max_increment = 0.05*BS;
 	f32 position_max_increment = 0.1*BS;
 
 	// Maximum time increment (for collision detection etc)
@@ -185,7 +116,7 @@ void ClientEnvironment::step(float dtime)
 		Stuff that has a maximum time increment
 	*/
 
-	u32 steps = ceil(dtime / dtime_max_increment);
+	u32 steps = std::ceil(dtime / dtime_max_increment);
 	f32 dtime_part = dtime / steps;
 	for (; steps > 0; --steps) {
 		/*
@@ -244,12 +175,11 @@ void ClientEnvironment::step(float dtime)
 		}
 
 		/*
-			Move the lplayer.
+			Move the local player.
 			This also does collision detection.
 		*/
 
-		lplayer->move(dtime_part, this, position_max_increment,
-			&player_collisions);
+		lplayer->move(dtime_part, this, &player_collisions);
 	}
 
 	bool player_immortal = false;
@@ -364,26 +294,26 @@ GenericCAO* ClientEnvironment::getGenericCAO(u16 id)
 	return NULL;
 }
 
-u16 ClientEnvironment::addActiveObject(ClientActiveObject *object)
+u16 ClientEnvironment::addActiveObject(std::unique_ptr<ClientActiveObject> object)
 {
+	auto obj = object.get();
 	// Register object. If failed return zero id
-	if (!m_ao_manager.registerObject(object))
+	if (!m_ao_manager.registerObject(std::move(object)))
 		return 0;
 
-	object->addToScene(m_texturesource, m_client->getSceneManager());
+	obj->addToScene(m_texturesource, m_client->getSceneManager());
 
 	// Update lighting immediately
-	object->updateLight(getDayNightRatio());
-	return object->getId();
+	obj->updateLight(getDayNightRatio());
+	return obj->getId();
 }
 
 void ClientEnvironment::addActiveObject(u16 id, u8 type,
 	const std::string &init_data)
 {
-	ClientActiveObject* obj =
+	std::unique_ptr<ClientActiveObject> obj =
 		ClientActiveObject::create((ActiveObjectType) type, m_client, this);
-	if(obj == NULL)
-	{
+	if (!obj) {
 		infostream<<"ClientEnvironment::addActiveObject(): "
 			<<"id="<<id<<" type="<<type<<": Couldn't create object"
 			<<std::endl;
@@ -392,12 +322,9 @@ void ClientEnvironment::addActiveObject(u16 id, u8 type,
 
 	obj->setId(id);
 
-	try
-	{
+	try {
 		obj->initialize(init_data);
-	}
-	catch(SerializationError &e)
-	{
+	} catch(SerializationError &e) {
 		errorstream<<"ClientEnvironment::addActiveObject():"
 			<<" id="<<id<<" type="<<type
 			<<": SerializationError in initialize(): "
@@ -406,12 +333,12 @@ void ClientEnvironment::addActiveObject(u16 id, u8 type,
 			<<std::endl;
 	}
 
-	u16 new_id = addActiveObject(obj);
+	u16 new_id = addActiveObject(std::move(obj));
 	// Object initialized:
-	if ((obj = getActiveObject(new_id))) {
+	if (ClientActiveObject *obj2 = getActiveObject(new_id)) {
 		// Final step is to update all children which are already known
 		// Data provided by AO_CMD_SPAWN_INFANT
-		const auto &children = obj->getAttachmentChildIds();
+		const auto &children = obj2->getAttachmentChildIds();
 		for (auto c_id : children) {
 			if (auto *o = getActiveObject(c_id))
 				o->updateAttachments();
@@ -423,7 +350,7 @@ void ClientEnvironment::addActiveObject(u16 id, u8 type,
 void ClientEnvironment::removeActiveObject(u16 id)
 {
 	// Get current attachment childs to detach them visually
-	std::unordered_set<int> attachment_childs;
+	std::unordered_set<ClientActiveObject::object_t> attachment_childs;
 	if (auto *obj = getActiveObject(id))
 		attachment_childs = obj->getAttachmentChildIds();
 
@@ -495,14 +422,15 @@ ClientEnvEvent ClientEnvironment::getClientEnvEvent()
 
 void ClientEnvironment::getSelectedActiveObjects(
 	const core::line3d<f32> &shootline_on_map,
-	std::vector<PointedThing> &objects)
+	std::vector<PointedThing> &objects,
+	const std::optional<Pointabilities> &pointabilities)
 {
 	auto allObjects = m_ao_manager.getActiveSelectableObjects(shootline_on_map);
 	const v3f line_vector = shootline_on_map.getVector();
 
 	for (const auto &allObject : allObjects) {
 		ClientActiveObject *obj = allObject.obj;
-		aabb3f selection_box;
+		aabb3f selection_box{{0.0f, 0.0f, 0.0f}};
 		if (!obj->getSelectionBox(&selection_box))
 			continue;
 
@@ -522,9 +450,23 @@ void ClientEnvironment::getSelectedActiveObjects(
 			current_raw_normal = current_normal;
 		}
 		if (collision) {
-			current_intersection += obj->getPosition();
-			objects.emplace_back(obj->getId(), current_intersection, current_normal, current_raw_normal,
-				(current_intersection - shootline_on_map.start).getLengthSQ());
+			PointabilityType pointable;
+			if (pointabilities) {
+				if (gcao->isPlayer()) {
+					pointable = pointabilities->matchPlayer(gcao->getGroups()).value_or(
+							gcao->getProperties().pointable);
+				} else {
+					pointable = pointabilities->matchObject(gcao->getName(),
+							gcao->getGroups()).value_or(gcao->getProperties().pointable);
+				}
+			} else {
+				pointable = gcao->getProperties().pointable;
+			}
+			if (pointable != PointabilityType::POINTABLE_NOT) {
+				current_intersection += obj->getPosition();
+				objects.emplace_back(obj->getId(), current_intersection, current_normal, current_raw_normal,
+					(current_intersection - shootline_on_map.start).getLengthSQ(), pointable);
+			}
 		}
 	}
 }

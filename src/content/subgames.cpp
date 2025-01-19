@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include <common/c_internal.h>
 #include "content/subgames.h"
@@ -28,17 +13,16 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "map_settings_manager.h"
 #include "util/string.h"
 
-#ifndef SERVER
-#include "client/tile.h" // getImagePath
-#endif
-
 // The maximum number of identical world names allowed
 #define MAX_WORLD_NAMES 100
+
+// gameid to assume for worlds that are missing world.mt
+#define LEGACY_GAMEID "minetest"
 
 namespace
 {
 
-bool getGameMinetestConfig(const std::string &game_path, Settings &conf)
+bool getGameConfig(const std::string &game_path, Settings &conf)
 {
 	std::string conf_path = game_path + DIR_DELIM + "minetest.conf";
 	return conf.readConfigFile(conf_path.c_str());
@@ -77,8 +61,64 @@ struct GameFindPath
 
 std::string getSubgamePathEnv()
 {
+	static bool has_warned = false;
 	char *subgame_path = getenv("MINETEST_SUBGAME_PATH");
-	return subgame_path ? std::string(subgame_path) : "";
+	if (subgame_path && !has_warned) {
+		warningstream << "MINETEST_SUBGAME_PATH is deprecated, use MINETEST_GAME_PATH instead."
+				<< std::endl;
+		has_warned = true;
+	}
+
+	char *game_path = getenv("MINETEST_GAME_PATH");
+
+	if (game_path)
+		return std::string(game_path);
+	else if (subgame_path)
+		return std::string(subgame_path);
+	return "";
+}
+
+static SubgameSpec getSubgameSpec(const std::string &game_id,
+		const std::string &game_path,
+		const std::unordered_map<std::string, std::string> &mods_paths)
+{
+	const auto gamemods_path = game_path + DIR_DELIM + "mods";
+	// Get meta
+	const std::string conf_path = game_path + DIR_DELIM + "game.conf";
+	Settings conf;
+	conf.readConfigFile(conf_path.c_str());
+
+	std::string game_title;
+	if (conf.exists("title"))
+		game_title = conf.get("title");
+	else if (conf.exists("name"))
+		game_title = conf.get("name");
+	else
+		game_title = game_id;
+
+	std::string game_author;
+	if (conf.exists("author"))
+		game_author = conf.get("author");
+
+	int game_release = 0;
+	if (conf.exists("release"))
+		game_release = conf.getS32("release");
+
+	std::string first_mod;
+	if (conf.exists("first_mod"))
+		first_mod = conf.get("first_mod");
+
+	std::string last_mod;
+	if (conf.exists("last_mod"))
+		last_mod = conf.get("last_mod");
+
+	SubgameSpec spec(game_id, game_path, gamemods_path, mods_paths, game_title,
+			game_author, game_release, first_mod, last_mod);
+
+	if (conf.exists("name") && !conf.exists("title"))
+		spec.deprecation_msgs.push_back("\"name\" setting in game.conf is deprecated, please use \"title\" instead");
+
+	return spec;
 }
 
 SubgameSpec findSubgame(const std::string &id)
@@ -124,8 +164,6 @@ SubgameSpec findSubgame(const std::string &id)
 	if (game_path.empty())
 		return SubgameSpec();
 
-	std::string gamemod_path = game_path + DIR_DELIM + "mods";
-
 	// Find mod directories
 	std::unordered_map<std::string, std::string> mods_paths;
 	mods_paths["mods"] = user + DIR_DELIM + "mods";
@@ -136,40 +174,7 @@ SubgameSpec findSubgame(const std::string &id)
 		mods_paths[fs::AbsolutePath(mod_path)] = mod_path;
 	}
 
-	// Get meta
-	std::string conf_path = game_path + DIR_DELIM + "game.conf";
-	Settings conf;
-	conf.readConfigFile(conf_path.c_str());
-
-	std::string game_title;
-	if (conf.exists("title"))
-		game_title = conf.get("title");
-	else if (conf.exists("name"))
-		game_title = conf.get("name");
-	else
-		game_title = id;
-
-	std::string game_author;
-	if (conf.exists("author"))
-		game_author = conf.get("author");
-
-	int game_release = 0;
-	if (conf.exists("release"))
-		game_release = conf.getS32("release");
-
-	std::string menuicon_path;
-#ifndef SERVER
-	menuicon_path = getImagePath(
-			game_path + DIR_DELIM + "menu" + DIR_DELIM + "icon.png");
-#endif
-
-	SubgameSpec spec(id, game_path, gamemod_path, mods_paths, game_title,
-			menuicon_path, game_author, game_release);
-
-	if (conf.exists("name") && !conf.exists("title"))
-		spec.deprecation_msgs.push_back("\"name\" setting in game.conf is deprecated, please use \"title\" instead");
-
-	return spec;
+	return getSubgameSpec(id, game_path, mods_paths);
 }
 
 SubgameSpec findWorldSubgame(const std::string &world_path)
@@ -177,25 +182,8 @@ SubgameSpec findWorldSubgame(const std::string &world_path)
 	std::string world_gameid = getWorldGameId(world_path, true);
 	// See if world contains an embedded game; if so, use it.
 	std::string world_gamepath = world_path + DIR_DELIM + "game";
-	if (fs::PathExists(world_gamepath)) {
-		SubgameSpec gamespec;
-		gamespec.id = world_gameid;
-		gamespec.path = world_gamepath;
-		gamespec.gamemods_path = world_gamepath + DIR_DELIM + "mods";
-
-		Settings conf;
-		std::string conf_path = world_gamepath + DIR_DELIM + "game.conf";
-		conf.readConfigFile(conf_path.c_str());
-
-		if (conf.exists("title"))
-			gamespec.title = conf.get("title");
-		else if (conf.exists("name"))
-			gamespec.title = conf.get("name");
-		else
-			gamespec.title = world_gameid;
-
-		return gamespec;
-	}
+	if (fs::PathExists(world_gamepath))
+		return getSubgameSpec(world_gameid, world_gamepath, {});
 	return findSubgame(world_gameid);
 }
 
@@ -226,9 +214,9 @@ std::set<std::string> getAvailableGameIds()
 
 			// Add it to result
 			const char *ends[] = {"_game", NULL};
-			std::string shorter = removeStringEnd(dln.name, ends);
+			auto shorter = removeStringEnd(dln.name, ends);
 			if (!shorter.empty())
-				gameids.insert(shorter);
+				gameids.emplace(shorter);
 			else
 				gameids.insert(dln.name);
 		}
@@ -246,10 +234,9 @@ std::vector<SubgameSpec> getAvailableGames()
 	return specs;
 }
 
-#define LEGACY_GAMEID "minetest"
-
 bool getWorldExists(const std::string &world_path)
 {
+	// Note: very old worlds are valid without a world.mt
 	return (fs::PathExists(world_path + DIR_DELIM + "map_meta.txt") ||
 			fs::PathExists(world_path + DIR_DELIM + "world.mt"));
 }
@@ -276,7 +263,7 @@ std::string getWorldGameId(const std::string &world_path, bool can_be_legacy)
 	bool succeeded = conf.readConfigFile(conf_path.c_str());
 	if (!succeeded) {
 		if (can_be_legacy) {
-			// If map_meta.txt exists, it is probably an old minetest world
+			// If map_meta.txt exists, it is probably a very old world
 			if (fs::PathExists(world_path + DIR_DELIM + "map_meta.txt"))
 				return LEGACY_GAMEID;
 		}
@@ -284,9 +271,6 @@ std::string getWorldGameId(const std::string &world_path, bool can_be_legacy)
 	}
 	if (!conf.exists("gameid"))
 		return "";
-	// The "mesetint" gameid has been discarded
-	if (conf.get("gameid") == "mesetint")
-		return "minetest";
 	return conf.get("gameid");
 }
 
@@ -370,7 +354,7 @@ void loadGameConfAndInitWorld(const std::string &path, const std::string &name,
 		game_settings = Settings::createLayer(SL_GAME);
 	}
 
-	getGameMinetestConfig(gamespec.path, *game_settings);
+	getGameConfig(gamespec.path, *game_settings);
 	game_settings->removeSecureSettings();
 
 	infostream << "Initializing world at " << final_path << std::endl;
@@ -404,7 +388,7 @@ void loadGameConfAndInitWorld(const std::string &path, const std::string &name,
 			conf.set("blocksize", std::to_string(MAP_BLOCKSIZE));
 
 		if (!conf.updateConfigFile(worldmt_path.c_str())) {
-			throw BaseException("Failed to update the config file");
+			throw BaseException("Failed to update world.mt");
 		}
 	}
 

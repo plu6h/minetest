@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #pragma once
 
@@ -131,6 +116,15 @@ struct ItemStack
 		return metadata.getToolCapabilities(*item_cap); // Check for override
 	}
 
+	const std::optional<WearBarParams> &getWearBarParams(
+			const IItemDefManager *itemdef) const
+	{
+		auto &meta_override = metadata.getWearBarParamOverride();
+		if (meta_override.has_value())
+			return meta_override;
+		return itemdef->get(name).wear_bar_params;
+	}
+
 	// Wear out (only tools)
 	// Returns true if the item is (was) a tool
 	bool addWear(s32 amount, const IItemDefManager *itemdef)
@@ -164,7 +158,7 @@ struct ItemStack
 
 	// Checks if another itemstack would stack with this one.
 	// Does not check if the item actually fits in the stack.
-	bool stacksWith(ItemStack other) const;
+	bool stacksWith(const ItemStack &other) const;
 
 	// Takes some items.
 	// If there are not enough, takes as many as it can.
@@ -277,8 +271,8 @@ public:
 
 	// Move an item to a different list (or a different stack in the same list)
 	// count is the maximum number of items to move (0 for everything)
-	// returns number of moved items
-	u32 moveItem(u32 i, InventoryList *dest, u32 dest_i,
+	// returns the moved stack
+	ItemStack moveItem(u32 i, InventoryList *dest, u32 dest_i,
 		u32 count = 0, bool swap_if_needed = true, bool *did_swap = NULL);
 
 	// like moveItem, but without a fixed destination index

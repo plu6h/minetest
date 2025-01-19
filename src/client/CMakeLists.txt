@@ -1,7 +1,8 @@
 set(sound_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/sound.cpp)
 
 if(USE_SOUND)
-	set(sound_SRCS ${sound_SRCS}
+	list(APPEND sound_SRCS
+		${CMAKE_CURRENT_SOURCE_DIR}/sound/al_extensions.cpp
 		${CMAKE_CURRENT_SOURCE_DIR}/sound/al_helpers.cpp
 		${CMAKE_CURRENT_SOURCE_DIR}/sound/ogg_file.cpp
 		${CMAKE_CURRENT_SOURCE_DIR}/sound/playing_sound.cpp
@@ -50,6 +51,7 @@ set(client_SRCS
 	${CMAKE_CURRENT_SOURCE_DIR}/fontengine.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/game.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/gameui.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/game_formspec.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/guiscalingfilter.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/hud.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/imagefilters.cpp
@@ -66,6 +68,9 @@ set(client_SRCS
 	${CMAKE_CURRENT_SOURCE_DIR}/shader.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/sky.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/tile.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/texturepaths.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/texturesource.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/imagesource.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/wieldmesh.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/shadows/dynamicshadows.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/shadows/dynamicshadowsrender.cpp

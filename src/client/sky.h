@@ -1,34 +1,26 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #pragma once
 
-#include "irrlichttypes_extrabloated.h"
+#include "irrlichttypes_bloated.h"
 #include <ISceneNode.h>
+#include <SMeshBuffer.h>
 #include <array>
-#include "camera.h"
+#include "camera.h" // CameraMode
 #include "irr_ptr.h"
-#include "shader.h"
 #include "skyparams.h"
 
 #define SKY_MATERIAL_COUNT 12
 
+namespace irr::video
+{
+	class IVideoDriver;
+	class IImage;
+}
+
+class IShaderSource;
 class ITextureSource;
 
 // Skybox, rendered with zbuffer turned off, before all other nodes.
@@ -54,12 +46,12 @@ public:
 
 	float getBrightness() { return m_brightness; }
 
-	const video::SColor &getBgColor() const
+	video::SColor getBgColor() const
 	{
 		return m_visible ? m_bgcolor : m_fallback_bg_color;
 	}
 
-	const video::SColor &getSkyColor() const
+	video::SColor getSkyColor() const
 	{
 		return m_visible ? m_skycolor : m_fallback_bg_color;
 	}
@@ -90,6 +82,7 @@ public:
 	const video::SColorf &getCloudColor() const { return m_cloudcolor_f; }
 
 	void setVisible(bool visible) { m_visible = visible; }
+
 	// Set only from set_sky API
 	void setCloudsEnabled(bool clouds_enabled) { m_clouds_enabled = clouds_enabled; }
 	void setFallbackBgColor(video::SColor fallback_bg_color)
@@ -111,17 +104,25 @@ public:
 		const std::string &use_sun_tint);
 	void setInClouds(bool clouds) { m_in_clouds = clouds; }
 	void clearSkyboxTextures() { m_sky_params.textures.clear(); }
-	void addTextureToSkybox(const  std::string &texture, int material_id,
+	void addTextureToSkybox(const std::string &texture, int material_id,
 		ITextureSource *tsrc);
-	const video::SColorf &getCurrentStarColor() const { return m_star_color; }
+
+	// Note: the Sky class doesn't use these values. It just stores them.
 	void setFogDistance(s16 fog_distance) { m_sky_params.fog_distance = fog_distance; }
 	s16 getFogDistance() const { return m_sky_params.fog_distance; }
 
 	void setFogStart(float fog_start) { m_sky_params.fog_start = fog_start; }
 	float getFogStart() const { return m_sky_params.fog_start; }
 
+	void setFogColor(video::SColor v) { m_sky_params.fog_color = v; }
+	video::SColor getFogColor() const {
+		if (m_sky_params.fog_color.getAlpha() > 0)
+			return m_sky_params.fog_color;
+		return getBgColor();
+	}
+
 private:
-	aabb3f m_box;
+	aabb3f m_box{{0.0f, 0.0f, 0.0f}};
 	video::SMaterial m_materials[SKY_MATERIAL_COUNT];
 	// How much sun & moon transition should affect horizon color
 	float m_horizon_blend()
@@ -173,7 +174,6 @@ private:
 	bool m_clouds_enabled = true; // Initialised to true, reset only by set_sky API
 	bool m_directional_colored_fog;
 	bool m_in_clouds = true; // Prevent duplicating bools to remember old values
-	bool m_enable_shaders = false;
 
 	video::SColorf m_bgcolor_bright_f = video::SColorf(1.0f, 1.0f, 1.0f, 1.0f);
 	video::SColorf m_skycolor_bright_f = video::SColorf(1.0f, 1.0f, 1.0f, 1.0f);
@@ -200,12 +200,11 @@ private:
 
 	u64 m_seed = 0;
 	irr_ptr<scene::SMeshBuffer> m_stars;
-	video::SColorf m_star_color;
 
-	video::ITexture *m_sun_texture;
-	video::ITexture *m_moon_texture;
-	video::ITexture *m_sun_tonemap;
-	video::ITexture *m_moon_tonemap;
+	video::ITexture *m_sun_texture = nullptr;
+	video::ITexture *m_moon_texture = nullptr;
+	video::IImage *m_sun_tonemap = nullptr;
+	video::IImage *m_moon_tonemap = nullptr;
 
 	void updateStars();
 

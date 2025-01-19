@@ -1,28 +1,14 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "serialization.h"
-
+#include "log.h"
 #include "util/serialize.h"
 
 #include <zlib.h>
 #include <zstd.h>
+#include <memory>
 
 /* report a zlib or i/o error */
 static void zerr(int ret)
@@ -104,11 +90,6 @@ void compressZlib(const u8 *data, size_t data_size, std::ostream &os, int level)
 		if(status == Z_STREAM_END)
 			break;
 	}
-}
-
-void compressZlib(const std::string &data, std::ostream &os, int level)
-{
-	compressZlib((u8*)data.c_str(), data.size(), os, level);
 }
 
 void decompressZlib(std::istream &is, std::ostream &os, size_t limit)
@@ -211,7 +192,6 @@ void compressZstd(const u8 *data, size_t data_size, std::ostream &os, int level)
 	// it will be destroyed when the thread ends
 	thread_local std::unique_ptr<ZSTD_CStream, ZSTD_Deleter> stream(ZSTD_createCStream());
 
-
 	ZSTD_initCStream(stream.get(), level);
 
 	const size_t bufsize = 16384;
@@ -247,11 +227,6 @@ void compressZstd(const u8 *data, size_t data_size, std::ostream &os, int level)
 
 }
 
-void compressZstd(const std::string &data, std::ostream &os, int level)
-{
-	compressZstd((u8*)data.c_str(), data.size(), os, level);
-}
-
 void decompressZstd(std::istream &is, std::ostream &os)
 {
 	// reusing the context is recommended for performance
@@ -273,6 +248,8 @@ void decompressZstd(std::istream &is, std::ostream &os)
 			is.read(input_buffer, bufsize);
 			input.size = is.gcount();
 			input.pos = 0;
+			if (input.size == 0)
+				throw SerializationError("decompressZstd: data ended too early");
 		}
 
 		ret = ZSTD_decompressStream(stream.get(), &output, &input);
@@ -295,7 +272,7 @@ void decompressZstd(std::istream &is, std::ostream &os)
 	}
 }
 
-void compress(u8 *data, u32 size, std::ostream &os, u8 version, int level)
+void compress(const u8 *data, u32 size, std::ostream &os, u8 version, int level)
 {
 	if(version >= 29)
 	{
@@ -343,16 +320,6 @@ void compress(u8 *data, u32 size, std::ostream &os, u8 version, int level)
 	// write count and byte
 	os.write((char*)&more_count, 1);
 	os.write((char*)&current_byte, 1);
-}
-
-void compress(const SharedBuffer<u8> &data, std::ostream &os, u8 version, int level)
-{
-	compress(*data, data.getSize(), os, version, level);
-}
-
-void compress(const std::string &data, std::ostream &os, u8 version, int level)
-{
-	compress((u8*)data.c_str(), data.size(), os, version, level);
 }
 
 void decompress(std::istream &is, std::ostream &os, u8 version)

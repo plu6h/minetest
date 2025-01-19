@@ -23,10 +23,12 @@ read_globals = {
 	"fgettext", "fgettext_ne",
 	"vector",
 	"VoxelArea",
+	"VoxelManip",
 	"profiler",
 	"Settings",
 	"check",
 	"PseudoRandom",
+	"PcgRandom",
 
 	string = {fields = {"split", "trim"}},
 	table  = {fields = {"copy", "getn", "indexof", "insert_all"}},

@@ -1,32 +1,19 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "nodedef.h"
 
 #include "itemdef.h"
-#ifndef SERVER
+#if CHECK_CLIENT_BUILD()
 #include "client/mesh.h"
 #include "client/shader.h"
 #include "client/client.h"
 #include "client/renderingengine.h"
+#include "client/texturesource.h"
 #include "client/tile.h"
 #include <IMeshManipulator.h>
+#include <SkinnedMesh.h>
 #endif
 #include "log.h"
 #include "settings.h"
@@ -126,57 +113,62 @@ void NodeBox::deSerialize(std::istream &is)
 
 	reset();
 
-	type = (enum NodeBoxType)readU8(is);
-
-	if(type == NODEBOX_FIXED || type == NODEBOX_LEVELED)
-	{
-		u16 fixed_count = readU16(is);
-		while(fixed_count--)
-		{
-			aabb3f box;
-			box.MinEdge = readV3F32(is);
-			box.MaxEdge = readV3F32(is);
-			fixed.push_back(box);
+	type = static_cast<NodeBoxType>(readU8(is));
+	switch (type) {
+		case NODEBOX_REGULAR:
+			break;
+		case NODEBOX_FIXED:
+		case NODEBOX_LEVELED: {
+			u16 fixed_count = readU16(is);
+			while(fixed_count--) {
+				aabb3f box{{0.0f, 0.0f, 0.0f}};
+				box.MinEdge = readV3F32(is);
+				box.MaxEdge = readV3F32(is);
+				fixed.push_back(box);
+			}
+			break;
 		}
-	}
-	else if(type == NODEBOX_WALLMOUNTED)
-	{
-		wall_top.MinEdge = readV3F32(is);
-		wall_top.MaxEdge = readV3F32(is);
-		wall_bottom.MinEdge = readV3F32(is);
-		wall_bottom.MaxEdge = readV3F32(is);
-		wall_side.MinEdge = readV3F32(is);
-		wall_side.MaxEdge = readV3F32(is);
-	}
-	else if (type == NODEBOX_CONNECTED)
-	{
+		case NODEBOX_WALLMOUNTED:
+			wall_top.MinEdge = readV3F32(is);
+			wall_top.MaxEdge = readV3F32(is);
+			wall_bottom.MinEdge = readV3F32(is);
+			wall_bottom.MaxEdge = readV3F32(is);
+			wall_side.MinEdge = readV3F32(is);
+			wall_side.MaxEdge = readV3F32(is);
+			break;
+		case NODEBOX_CONNECTED: {
 #define READBOXES(box) { \
-		count = readU16(is); \
-		(box).reserve(count); \
-		while (count--) { \
-			v3f min = readV3F32(is); \
-			v3f max = readV3F32(is); \
-			(box).emplace_back(min, max); }; }
+			count = readU16(is); \
+			(box).reserve(count); \
+			while (count--) { \
+				v3f min = readV3F32(is); \
+				v3f max = readV3F32(is); \
+				(box).emplace_back(min, max); }; }
 
-		u16 count;
+			u16 count;
 
-		auto &c = getConnected();
+			auto &c = getConnected();
 
-		READBOXES(fixed);
-		READBOXES(c.connect_top);
-		READBOXES(c.connect_bottom);
-		READBOXES(c.connect_front);
-		READBOXES(c.connect_left);
-		READBOXES(c.connect_back);
-		READBOXES(c.connect_right);
-		READBOXES(c.disconnected_top);
-		READBOXES(c.disconnected_bottom);
-		READBOXES(c.disconnected_front);
-		READBOXES(c.disconnected_left);
-		READBOXES(c.disconnected_back);
-		READBOXES(c.disconnected_right);
-		READBOXES(c.disconnected);
-		READBOXES(c.disconnected_sides);
+			READBOXES(fixed);
+			READBOXES(c.connect_top);
+			READBOXES(c.connect_bottom);
+			READBOXES(c.connect_front);
+			READBOXES(c.connect_left);
+			READBOXES(c.connect_back);
+			READBOXES(c.connect_right);
+			READBOXES(c.disconnected_top);
+			READBOXES(c.disconnected_bottom);
+			READBOXES(c.disconnected_front);
+			READBOXES(c.disconnected_left);
+			READBOXES(c.disconnected_back);
+			READBOXES(c.disconnected_right);
+			READBOXES(c.disconnected);
+			READBOXES(c.disconnected_sides);
+			break;
+		}
+		default:
+			type = NODEBOX_REGULAR;
+			break;
 	}
 }
 
@@ -266,27 +258,24 @@ void TileDef::deSerialize(std::istream &is, NodeDrawType drawtype, u16 protocol_
 		color.setBlue(readU8(is));
 	}
 	scale = has_scale ? readU8(is) : 0;
-	if (has_align_style)
+	if (has_align_style) {
 		align_style = static_cast<AlignStyle>(readU8(is));
-	else
+		if (align_style >= AlignStyle_END)
+			align_style = ALIGN_STYLE_NODE;
+	} else {
 		align_style = ALIGN_STYLE_NODE;
+	}
 }
 
 void TextureSettings::readSettings()
 {
 	connected_glass                = g_settings->getBool("connected_glass");
-	opaque_water                   = g_settings->getBool("opaque_water");
-	bool smooth_lighting           = g_settings->getBool("smooth_lighting");
-	enable_mesh_cache              = g_settings->getBool("enable_mesh_cache");
+	translucent_liquids            = g_settings->getBool("translucent_liquids");
 	enable_minimap                 = g_settings->getBool("enable_minimap");
 	node_texture_size              = std::max<u16>(g_settings->getU16("texture_min_size"), 1);
 	std::string leaves_style_str   = g_settings->get("leaves_style");
 	std::string world_aligned_mode_str = g_settings->get("world_aligned_mode");
 	std::string autoscale_mode_str = g_settings->get("autoscale_mode");
-
-	// Mesh cache is not supported in combination with smooth lighting
-	if (smooth_lighting)
-		enable_mesh_cache = false;
 
 	if (leaves_style_str == "fancy") {
 		leaves_style = LEAVES_FANCY;
@@ -324,7 +313,7 @@ ContentFeatures::ContentFeatures()
 
 ContentFeatures::~ContentFeatures()
 {
-#ifndef SERVER
+#if CHECK_CLIENT_BUILD()
 	for (u16 j = 0; j < 6; j++) {
 		delete tiles[j].layers[0].frames;
 		delete tiles[j].layers[1].frames;
@@ -339,7 +328,7 @@ void ContentFeatures::reset()
 	/*
 		Cached stuff
 	*/
-#ifndef SERVER
+#if CHECK_CLIENT_BUILD()
 	solidness = 2;
 	visual_solidness = 0;
 	backface_culling = true;
@@ -348,6 +337,8 @@ void ContentFeatures::reset()
 	has_on_construct = false;
 	has_on_destruct = false;
 	has_after_destruct = false;
+	floats = false;
+
 	/*
 		Actual data
 
@@ -360,9 +351,8 @@ void ContentFeatures::reset()
 	groups["dig_immediate"] = 2;
 	drawtype = NDT_NORMAL;
 	mesh.clear();
-#ifndef SERVER
-	for (auto &i : mesh_ptr)
-		i = NULL;
+#if CHECK_CLIENT_BUILD()
+	mesh_ptr = nullptr;
 	minimap_color = video::SColor(0, 0, 0, 0);
 #endif
 	visual_scale = 1.0;
@@ -378,7 +368,7 @@ void ContentFeatures::reset()
 	light_propagates = false;
 	sunlight_propagates = false;
 	walkable = true;
-	pointable = true;
+	pointable = PointabilityType::POINTABLE;
 	diggable = true;
 	climbable = false;
 	buildable_to = false;
@@ -420,8 +410,6 @@ void ContentFeatures::reset()
 
 void ContentFeatures::setAlphaFromLegacy(u8 legacy_alpha)
 {
-	// No special handling for nodebox/mesh here as it doesn't make sense to
-	// throw warnings when the server is too old to support the "correct" way
 	switch (drawtype) {
 	case NDT_NORMAL:
 		alpha = legacy_alpha == 255 ? ALPHAMODE_OPAQUE : ALPHAMODE_CLIP;
@@ -498,7 +486,7 @@ void ContentFeatures::serialize(std::ostream &os, u16 protocol_version) const
 
 	// interaction
 	writeU8(os, walkable);
-	writeU8(os, pointable);
+	Pointabilities::serializePointabilityType(os, pointable);
 	writeU8(os, diggable);
 	writeU8(os, climbable);
 	writeU8(os, buildable_to);
@@ -561,11 +549,19 @@ void ContentFeatures::deSerialize(std::istream &is, u16 protocol_version)
 		int value = readS16(is);
 		groups[name] = value;
 	}
-	param_type = (enum ContentParamType) readU8(is);
-	param_type_2 = (enum ContentParamType2) readU8(is);
+
+	param_type = static_cast<ContentParamType>(readU8(is));
+	if (param_type >= ContentParamType_END)
+		param_type = CPT_NONE;
+
+	param_type_2 = static_cast<ContentParamType2>(readU8(is));
+	if (param_type_2 >= ContentParamType2_END)
+		param_type_2 = CPT2_NONE;
 
 	// visual
-	drawtype = (enum NodeDrawType) readU8(is);
+	drawtype = static_cast<NodeDrawType>(readU8(is));
+	if (drawtype >= NodeDrawType_END)
+		drawtype = NDT_NORMAL;
 	mesh = deSerializeString16(is);
 	visual_scale = readF32(is);
 	if (readU8(is) != 6)
@@ -603,7 +599,7 @@ void ContentFeatures::deSerialize(std::istream &is, u16 protocol_version)
 
 	// interaction
 	walkable = readU8(is);
-	pointable = readU8(is);
+	pointable = Pointabilities::deSerializePointabilityType(is);
 	diggable = readU8(is);
 	climbable = readU8(is);
 	buildable_to = readU8(is);
@@ -611,7 +607,9 @@ void ContentFeatures::deSerialize(std::istream &is, u16 protocol_version)
 	damage_per_second = readU32(is);
 
 	// liquid
-	liquid_type = (enum LiquidType) readU8(is);
+	liquid_type = static_cast<LiquidType>(readU8(is));
+	if (liquid_type >= LiquidType_END)
+		liquid_type = LIQUID_NONE;
 	liquid_move_physics = liquid_type != LIQUID_NONE;
 	liquid_alternative_flowing = deSerializeString16(is);
 	liquid_alternative_source = deSerializeString16(is);
@@ -648,6 +646,8 @@ void ContentFeatures::deSerialize(std::istream &is, u16 protocol_version)
 		if (is.eof())
 			throw SerializationError("");
 		alpha = static_cast<enum AlphaMode>(tmp);
+		if (alpha >= AlphaMode_END || alpha == ALPHAMODE_LEGACY_COMPAT)
+			alpha = ALPHAMODE_OPAQUE;
 
 		tmp = readU8(is);
 		if (is.eof())
@@ -663,10 +663,10 @@ void ContentFeatures::deSerialize(std::istream &is, u16 protocol_version)
 		if (is.eof())
 			throw SerializationError("");
 		post_effect_color_shaded = tmp;
-	} catch(SerializationError &e) {};
+	} catch (SerializationError &e) {};
 }
 
-#ifndef SERVER
+#if CHECK_CLIENT_BUILD()
 static void fillTileAttribs(ITextureSource *tsrc, TileLayer *layer,
 		const TileSpec &tile, const TileDef &tiledef, video::SColor color,
 		u8 material_type, u32 shader_id, bool backface_culling,
@@ -692,8 +692,6 @@ static void fillTileAttribs(ITextureSource *tsrc, TileLayer *layer,
 	if (!tile.world_aligned)
 		layer->scale = 1;
 
-	layer->flags_texture = tsrc->getShaderFlagsTexture(layer->normal_texture ? true : false);
-
 	// Material flags
 	layer->material_flags = 0;
 	if (backface_culling)
@@ -716,7 +714,7 @@ static void fillTileAttribs(ITextureSource *tsrc, TileLayer *layer,
 	int frame_count = 1;
 	if (layer->material_flags & MATERIAL_FLAG_ANIMATION) {
 		assert(layer->texture);
-		int frame_length_ms;
+		int frame_length_ms = 0;
 		tiledef.animation.determineParams(layer->texture->getOriginalSize(),
 				&frame_count, &frame_length_ms, NULL);
 		layer->animation_frame_count = frame_count;
@@ -733,72 +731,18 @@ static void fillTileAttribs(ITextureSource *tsrc, TileLayer *layer,
 
 		std::ostringstream os(std::ios::binary);
 		for (int i = 0; i < frame_count; i++) {
-			FrameSpec frame;
-
 			os.str("");
 			os << tiledef.name;
 			tiledef.animation.getTextureModifer(os,
 					layer->texture->getOriginalSize(), i);
 
+			FrameSpec &frame = (*layer->frames)[i];
 			frame.texture = tsrc->getTextureForMesh(os.str(), &frame.texture_id);
-			if (layer->normal_texture)
-				frame.normal_texture = tsrc->getNormalTexture(os.str());
-			frame.flags_texture = layer->flags_texture;
-			(*layer->frames)[i] = frame;
 		}
 	}
 }
 
-bool ContentFeatures::textureAlphaCheck(ITextureSource *tsrc, const TileDef *tiles, int length)
-{
-	video::IVideoDriver *driver = RenderingEngine::get_video_driver();
-	static thread_local bool long_warning_printed = false;
-	std::set<std::string> seen;
-
-	for (int i = 0; i < length; i++) {
-		if (seen.find(tiles[i].name) != seen.end())
-			continue;
-		seen.insert(tiles[i].name);
-
-		// Load the texture and see if there's any transparent pixels
-		video::ITexture *texture = tsrc->getTexture(tiles[i].name);
-		video::IImage *image = driver->createImage(texture,
-			core::position2d<s32>(0, 0), texture->getOriginalSize());
-		if (!image)
-			continue;
-		core::dimension2d<u32> dim = image->getDimension();
-		bool ok = true;
-		for (u16 x = 0; x < dim.Width; x++) {
-			for (u16 y = 0; y < dim.Height; y++) {
-				if (image->getPixel(x, y).getAlpha() < 255) {
-					ok = false;
-					goto break_loop;
-				}
-			}
-		}
-
-break_loop:
-		image->drop();
-		if (ok)
-			continue;
-		warningstream << "Texture \"" << tiles[i].name << "\" of "
-			<< name << " has transparency, assuming "
-			"use_texture_alpha = \"clip\"." << std::endl;
-		if (!long_warning_printed) {
-			warningstream << "  This warning can be a false-positive if "
-				"unused pixels in the texture are transparent. However if "
-				"it is meant to be transparent, you *MUST* update the "
-				"nodedef and set use_texture_alpha = \"clip\"! This "
-				"compatibility code will be removed in a few releases."
-				<< std::endl;
-			long_warning_printed = true;
-		}
-		return true;
-	}
-	return false;
-}
-
-bool isWorldAligned(AlignStyle style, WorldAlignMode mode, NodeDrawType drawtype)
+static bool isWorldAligned(AlignStyle style, WorldAlignMode mode, NodeDrawType drawtype)
 {
 	if (style == ALIGN_STYLE_WORLD)
 		return true;
@@ -841,11 +785,6 @@ void ContentFeatures::updateTextures(ITextureSource *tsrc, IShaderSource *shdsrc
 
 	bool is_liquid = false;
 
-	if (alpha == ALPHAMODE_LEGACY_COMPAT) {
-		// Before working with the alpha mode, resolve any legacy kludges
-		alpha = textureAlphaCheck(tsrc, tdef, 6) ? ALPHAMODE_CLIP : ALPHAMODE_OPAQUE;
-	}
-
 	MaterialType material_type = alpha == ALPHAMODE_OPAQUE ?
 		TILE_MATERIAL_OPAQUE : (alpha == ALPHAMODE_CLIP ? TILE_MATERIAL_BASIC :
 		TILE_MATERIAL_ALPHA);
@@ -859,14 +798,14 @@ void ContentFeatures::updateTextures(ITextureSource *tsrc, IShaderSource *shdsrc
 		solidness = 0;
 		break;
 	case NDT_LIQUID:
-		if (tsettings.opaque_water)
+		if (!tsettings.translucent_liquids)
 			alpha = ALPHAMODE_OPAQUE;
 		solidness = 1;
 		is_liquid = true;
 		break;
 	case NDT_FLOWINGLIQUID:
 		solidness = 0;
-		if (tsettings.opaque_water)
+		if (!tsettings.translucent_liquids)
 			alpha = ALPHAMODE_OPAQUE;
 		is_liquid = true;
 		break;
@@ -1005,49 +944,24 @@ void ContentFeatures::updateTextures(ITextureSource *tsrc, IShaderSource *shdsrc
 		palette = tsrc->getPalette(palette_name);
 
 	if (drawtype == NDT_MESH && !mesh.empty()) {
-		// Meshnode drawtype
 		// Read the mesh and apply scale
-		mesh_ptr[0] = client->getMesh(mesh);
-		if (mesh_ptr[0]){
-			v3f scale = v3f(1.0, 1.0, 1.0) * BS * visual_scale;
-			scaleMesh(mesh_ptr[0], scale);
-			recalculateBoundingBox(mesh_ptr[0]);
-			meshmanip->recalculateNormals(mesh_ptr[0], true, false);
+		mesh_ptr = client->getMesh(mesh);
+		if (mesh_ptr) {
+			v3f scale = v3f(BS) * visual_scale;
+			scaleMesh(mesh_ptr, scale);
+			recalculateBoundingBox(mesh_ptr);
+			if (!checkMeshNormals(mesh_ptr)) {
+				infostream << "ContentFeatures: recalculating normals for mesh "
+					<< mesh << std::endl;
+				meshmanip->recalculateNormals(mesh_ptr, true, false);
+			} else {
+				// Animation is not supported, but we need to reset it to
+				// default state if it is animated.
+				// Note: recalculateNormals() also does this hence the else-block
+				if (mesh_ptr->getMeshType() == scene::EAMT_SKINNED)
+					((scene::SkinnedMesh*) mesh_ptr)->resetAnimation();
+			}
 		}
-	}
-
-	//Cache 6dfacedir and wallmounted rotated clones of meshes
-	if (tsettings.enable_mesh_cache && mesh_ptr[0] &&
-			(param_type_2 == CPT2_FACEDIR
-			|| param_type_2 == CPT2_COLORED_FACEDIR)) {
-		for (u16 j = 1; j < 24; j++) {
-			mesh_ptr[j] = cloneMesh(mesh_ptr[0]);
-			rotateMeshBy6dFacedir(mesh_ptr[j], j);
-			recalculateBoundingBox(mesh_ptr[j]);
-			meshmanip->recalculateNormals(mesh_ptr[j], true, false);
-		}
-	} else if (tsettings.enable_mesh_cache && mesh_ptr[0] &&
-			(param_type_2 == CPT2_4DIR
-			|| param_type_2 == CPT2_COLORED_4DIR)) {
-		for (u16 j = 1; j < 4; j++) {
-			mesh_ptr[j] = cloneMesh(mesh_ptr[0]);
-			rotateMeshBy6dFacedir(mesh_ptr[j], j);
-			recalculateBoundingBox(mesh_ptr[j]);
-			meshmanip->recalculateNormals(mesh_ptr[j], true, false);
-		}
-	} else if (tsettings.enable_mesh_cache && mesh_ptr[0]
-			&& (param_type_2 == CPT2_WALLMOUNTED ||
-			param_type_2 == CPT2_COLORED_WALLMOUNTED)) {
-		static const u8 wm_to_6d[6] = { 20, 0, 16 + 1, 12 + 3, 8, 4 + 2 };
-		for (u16 j = 1; j < 6; j++) {
-			mesh_ptr[j] = cloneMesh(mesh_ptr[0]);
-			rotateMeshBy6dFacedir(mesh_ptr[j], wm_to_6d[j]);
-			recalculateBoundingBox(mesh_ptr[j]);
-			meshmanip->recalculateNormals(mesh_ptr[j], true, false);
-		}
-		rotateMeshBy6dFacedir(mesh_ptr[0], wm_to_6d[0]);
-		recalculateBoundingBox(mesh_ptr[0]);
-		meshmanip->recalculateNormals(mesh_ptr[0], true, false);
 	}
 }
 #endif
@@ -1067,12 +981,10 @@ NodeDefManager::NodeDefManager()
 
 NodeDefManager::~NodeDefManager()
 {
-#ifndef SERVER
+#if CHECK_CLIENT_BUILD()
 	for (ContentFeatures &f : m_content_features) {
-		for (auto &j : f.mesh_ptr) {
-			if (j)
-				j->drop();
-		}
+		if (f.mesh_ptr)
+			f.mesh_ptr->drop();
 	}
 #endif
 }
@@ -1119,7 +1031,7 @@ void NodeDefManager::clear()
 		f.light_propagates    = true;
 		f.sunlight_propagates = true;
 		f.walkable            = false;
-		f.pointable           = false;
+		f.pointable           = PointabilityType::POINTABLE_NOT;
 		f.diggable            = false;
 		f.buildable_to        = true;
 		f.floodable           = true;
@@ -1140,7 +1052,7 @@ void NodeDefManager::clear()
 		f.light_propagates    = false;
 		f.sunlight_propagates = false;
 		f.walkable            = false;
-		f.pointable           = false;
+		f.pointable           = PointabilityType::POINTABLE_NOT;
 		f.diggable            = false;
 		f.buildable_to        = true; // A way to remove accidental CONTENT_IGNOREs
 		f.is_ground_content   = true;
@@ -1176,17 +1088,16 @@ bool NodeDefManager::getIds(const std::string &name,
 		std::vector<content_t> &result) const
 {
 	//TimeTaker t("getIds", NULL, PRECISION_MICRO);
-	if (name.substr(0,6) != "group:") {
+	if (!str_starts_with(name, "group:")) {
 		content_t id = CONTENT_IGNORE;
 		bool exists = getId(name, id);
 		if (exists)
 			result.push_back(id);
 		return exists;
 	}
-	std::string group = name.substr(6);
 
-	std::unordered_map<std::string, std::vector<content_t>>::const_iterator
-		i = m_group_to_items.find(group);
+	std::string group = name.substr(6);
+	auto i = m_group_to_items.find(group);
 	if (i == m_group_to_items.end())
 		return true;
 
@@ -1521,7 +1432,7 @@ void NodeDefManager::applyTextureOverrides(const std::vector<TextureOverride> &o
 
 void NodeDefManager::updateTextures(IGameDef *gamedef, void *progress_callback_args)
 {
-#ifndef SERVER
+#if CHECK_CLIENT_BUILD()
 	infostream << "NodeDefManager::updateTextures(): Updating "
 		"textures in node definitions" << std::endl;
 
@@ -1736,22 +1647,46 @@ bool NodeDefManager::nodeboxConnects(MapNode from, MapNode to,
 				f2.param_type_2 == CPT2_4DIR ||
 				f2.param_type_2 == CPT2_COLORED_4DIR)
 				&& (connect_face >= 4)) {
-			static const u8 rot[33 * 4] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-				0, 0, 0, 0, 4, 32, 16, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-				0, // 4 - back
-				8, 4, 32, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-				0, // 8 - right
-				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 8, 4, 32, 0,
-				0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-				0, // 16 - front
-				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-				0, 0, 0, 0, 0, 0, 32, 16, 8, 4 // 32 - left
-				};
+			static const u8 rot[33 * 4] = {
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				4, 32, 16, 8, // 4 - back
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				8, 4, 32, 16, // 8 - right
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				16, 8, 4, 32, // 16 - front
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				32, 16, 8, 4 // 32 - left
+			};
 			if (f2.param_type_2 == CPT2_FACEDIR ||
 					f2.param_type_2 == CPT2_COLORED_FACEDIR) {
+				// FIXME: support arbitrary rotations (to.param2 & 0x1F) (#7696)
 				return (f2.connect_sides
-					& rot[(connect_face * 4) + (to.param2 & 0x1F)]);
+					& rot[(connect_face * 4) + (to.param2 & 0x03)]);
 			} else if (f2.param_type_2 == CPT2_4DIR ||
 					f2.param_type_2 == CPT2_COLORED_4DIR) {
 				return (f2.connect_sides
@@ -1857,7 +1792,7 @@ bool NodeResolver::getIdsFromNrBacklog(std::vector<content_t> *result_out,
 		content_t c;
 		std::string &name = m_nodenames[m_nodenames_idx++];
 
-		if (name.substr(0,6) != "group:") {
+		if (!str_starts_with(name, "group:")) {
 			if (m_ndef->getId(name, c)) {
 				result_out->push_back(c);
 			} else if (all_required) {

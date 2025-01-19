@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 
 /******************************************************************************/
@@ -27,7 +12,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #pragma once
 
 #include <vector>
-#include <unordered_map>
+#include <string_view>
 
 #include "irrlichttypes_bloated.h"
 #include "common/c_types.h"
@@ -67,11 +52,11 @@ v3s16              getv3s16field_default(lua_State *L, int table,
 
 bool               getstringfield(lua_State *L, int table,
                              const char *fieldname, std::string &result);
+bool               getstringfield(lua_State *L, int table,
+                             const char *fieldname, std::string_view &result);
 size_t             getstringlistfield(lua_State *L, int table,
                              const char *fieldname,
                              std::vector<std::string> *result);
-void               read_groups(lua_State *L, int index,
-                             std::unordered_map<std::string, int> &result);
 bool               getboolfield(lua_State *L, int table,
                              const char *fieldname, bool &result);
 bool               getfloatfield(lua_State *L, int table,
@@ -100,7 +85,19 @@ bool                read_color          (lua_State *L, int index,
                                          video::SColor *color);
 bool                is_color_table      (lua_State *L, int index);
 
+/**
+ * Read a floating-point axis-aligned box from Lua.
+ *
+ * @param  L the Lua state
+ * @param  index the index of the Lua variable to read the box from. The
+ *         variable must contain a table of the form
+ *         {minx, miny, minz, maxx, maxy, maxz}.
+ * @param  scale factor to scale the bounding box by
+ *
+ * @return the box corresponding to lua table
+ */
 aabb3f              read_aabb3f         (lua_State *L, int index, f32 scale);
+
 v3s16               read_v3s16          (lua_State *L, int index);
 std::vector<aabb3f> read_aabb3f_vector  (lua_State *L, int index, f32 scale);
 size_t              read_stringlist     (lua_State *L, int index,
@@ -110,15 +107,18 @@ void                push_v2s16          (lua_State *L, v2s16 p);
 void                push_v2s32          (lua_State *L, v2s32 p);
 void                push_v2u32          (lua_State *L, v2u32 p);
 void                push_v3s16          (lua_State *L, v3s16 p);
-void                push_aabb3f         (lua_State *L, aabb3f box);
+void                push_aabb3f         (lua_State *L, aabb3f box, f32 divisor = 1.0f);
 void                push_ARGB8          (lua_State *L, video::SColor color);
 void                pushFloatPos        (lua_State *L, v3f p);
 void                push_v3f            (lua_State *L, v3f p);
 void                push_v2f            (lua_State *L, v2f p);
+void                push_aabb3f_vector  (lua_State *L, const std::vector<aabb3f> &boxes,
+                                         f32 divisor = 1.0f);
 
 void                warn_if_field_exists(lua_State *L, int table,
                                          const char *fieldname,
-                                         const std::string &message);
+                                         std::string_view name,
+                                         std::string_view message);
 
 size_t write_array_slice_float(lua_State *L, int table_index, float *data,
 	v3u16 data_size, v3u16 slice_offset, v3u16 slice_size);

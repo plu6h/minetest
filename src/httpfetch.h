@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #pragma once
 
@@ -135,6 +120,9 @@ u64 httpfetch_caller_alloc_secure();
 // to stop any ongoing fetches for the given caller.
 void httpfetch_caller_free(u64 caller);
 
-// Performs a synchronous HTTP request. This blocks and therefore should
-// only be used from background threads.
-void httpfetch_sync(const HTTPFetchRequest &fetch_request, HTTPFetchResult &fetch_result);
+// Performs a synchronous HTTP request that is interruptible if the current
+// thread is a Thread object. interval is the completion check interval in ms.
+// This blocks and therefore should only be used from background threads.
+// Returned is whether the request completed without interruption.
+bool httpfetch_sync_interruptible(const HTTPFetchRequest &fetch_request,
+		HTTPFetchResult &fetch_result, long interval = 100);

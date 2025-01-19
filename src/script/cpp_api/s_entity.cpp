@@ -1,21 +1,6 @@
-/*
-Minetest
-Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation; either version 2.1 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+// Luanti
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "cpp_api/s_entity.h"
 #include "cpp_api/s_internal.h"
@@ -262,8 +247,6 @@ bool ScriptApiEntity::luaentity_Punch(u16 id,
 {
 	SCRIPTAPI_PRECHECKHEADER
 
-	assert(puncher);
-
 	int error_handler = PUSH_ERROR_HANDLER(L);
 
 	// Get core.luaentities[id]
@@ -278,7 +261,10 @@ bool ScriptApiEntity::luaentity_Punch(u16 id,
 	}
 	luaL_checktype(L, -1, LUA_TFUNCTION);
 	lua_pushvalue(L, object);  // self
-	objectrefGetOrCreate(L, puncher);  // Clicker reference
+	if (puncher)
+		objectrefGetOrCreate(L, puncher);  // Puncher reference
+	else
+		lua_pushnil(L);
 	lua_pushnumber(L, time_from_last_punch);
 	push_tool_capabilities(L, *toolcap);
 	push_v3f(L, dir);
